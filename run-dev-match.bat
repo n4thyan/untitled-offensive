@@ -11,12 +11,15 @@ REM  repository.
 REM
 REM  Usage:
 REM    run-dev-match.bat [MAP] [GAMETYPE] [BOTCOUNT]
-REM      MAP        defaults to mp_carentan
+REM      MAP        a retail map (mp_carentan) or our own (mp_toccoa)
+REM                  defaults to mp_toccoa
 REM      GAMETYPE   dm or tdm      defaults to dm
 REM      BOTCOUNT   defaults to 3
 REM
-REM  Example:
-REM    run-dev-match.bat mp_carentan dm 4
+REM  Examples:
+REM    run-dev-match.bat                        REM mp_toccoa, dm, 3 bots
+REM    run-dev-match.bat mp_toccoa tdm 4
+REM    run-dev-match.bat mp_carentan dm 3
 REM ============================================================================
 
 setlocal
@@ -27,9 +30,12 @@ REM Where this script lives; logs go next to the binaries.
 set "ROOT=%~dp0"
 set "BIN=%ROOT%target\release"
 set "LOGS=%ROOT%dev-logs"
+REM Our own content, searched BEFORE the retail main/ so custom maps resolve
+REM without the install being modified or duplicated into this repository.
+set "OVERLAY=%ROOT%main-untitled"
 
 set "MAP=%~1"
-if "%MAP%"=="" set "MAP=mp_carentan"
+if "%MAP%"=="" set "MAP=mp_toccoa"
 
 set "GAMETYPE=%~2"
 if "%GAMETYPE%"=="" set "GAMETYPE=dm"
@@ -48,6 +54,27 @@ if not exist "%BIN%\vcod-server.exe" (
   )
 )
 
+REM --- custom map: build it from source ----------------------------------------
+REM mp_toccoa is generated (layout.py -> BSP -> pk3), so no built binary needs
+REM committing and the map is reproducible from source. Spawn validation runs
+REM first: a spawn buried in geometry is a layout bug that otherwise only
+REM shows up as a bot standing still for four minutes.
+if /i "%MAP%"=="mp_toccoa" (
+  echo Building custom map %MAP% ...
+  pushd "%ROOT%tools\toccoa"
+  python validate_spawns.py
+  if errorlevel 1 (
+    popd
+    echo SPAWN VALIDATION FAILED - fix layout.py before playing.
+    exit /b 1
+  )
+  python build_toccoa.py
+  if errorlevel 1 ( popd & echo MAP BUILD FAILED & exit /b 1 )
+  python package_pk3.py
+  if errorlevel 1 ( popd & echo MAP PACKAGE FAILED & exit /b 1 )
+  popd
+)
+
 if not exist "%GAME_DIR%\main\pak0.pk3" (
   echo ERROR: Call of Duty install not found at "%GAME_DIR%".
   echo Edit GAME_DIR at the top of this script and retry.
@@ -61,12 +88,13 @@ echo   map      : %MAP%
 echo   gametype : %GAMETYPE%
 echo   bots     : %BOTS%
 echo   game dir : %GAME_DIR%
+echo   overlay  : %OVERLAY%
 echo   logs     : %LOGS%
 echo.
 
 REM --- dedicated server -------------------------------------------------------
 echo Starting dedicated server on udp/28960 ...
-start "UNTITLED server" cmd /k ""%BIN%\vcod-server.exe" --game-dir "%GAME_DIR%" --gametype %GAMETYPE% --bots %BOTS% --bots-shoot --port 28960 %MAP% > "%LOGS%\server.log" 2>&1"
+start "UNTITLED server" cmd /k ""%BIN%\vcod-server.exe" --game-dir "%GAME_DIR%" --overlay-dir "%OVERLAY%" --gametype %GAMETYPE% --bots %BOTS% --bots-shoot --port 28960 %MAP% > "%LOGS%\server.log" 2>&1"
 
 REM The server needs to load the map, parse the gametype script and run the
 REM bots through the join menus before a client can see a live match. 12s is
@@ -77,13 +105,13 @@ timeout /t 12 /nobreak >nul
 
 REM --- client -----------------------------------------------------------------
 echo Launching client, joining as allies with the M1 Carbine ...
-start "UNTITLED client" "%BIN%\vcod.exe" --game-dir "%GAME_DIR%" --connect 127.0.0.1:28960 --team allies --weapon m1carbine_mp > "%LOGS%\client.log" 2>&1
+start "UNTITLED client" "%BIN%\vcod.exe" --game-dir "%GAME_DIR%" --overlay-dir "%OVERLAY%" --connect 127.0.0.1:28960 --team allies --weapon m1carbine_mp > "%LOGS%\client.log" 2>&1"
 
 echo.
 echo Client launched.
 echo   click the game window to capture the mouse, Esc to release it
-echo   WASD move · Space jump · Ctrl crouch · Z prone · Q/E lean · Shift walk
-echo   LMB fire · RMB aim · R reload · 1-6 weapons · F3 debug overlay
+echo   WASD move . Space jump . C crouch . Ctrl prone . Q/E lean . Shift walk
+echo   LMB fire . RMB aim . R reload . 1-4 weapons . F3 debug overlay
 echo.
 echo Server log : %LOGS%\server.log
 echo Client log : %LOGS%\client.log

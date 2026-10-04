@@ -25,6 +25,45 @@ pub struct Pk3Fs {
 }
 
 impl Pk3Fs {
+    /// Open a mod directory, optionally layered over another one.
+    ///
+    /// `overlay` is searched FIRST and the base `mod_dir` second, so a project
+    /// pk3 can add a map (or override any file) without the base install being
+    /// modified, copied, or duplicated into the repository. That is what lets
+    /// original content sit alongside a retail `main/` under a clean licence
+    /// split: nothing proprietary is ever written into the repo, and the
+    /// overlay holds only our own archives.
+    ///
+    /// Ordering matters within the overlay too, and matches retail: later
+    /// archives win, so `untitled.pk3` can override a file an earlier overlay
+    /// provided. Each directory is sorted and concatenated overlay-first.
+    pub fn open_layered(mod_dir: &Path, overlay: Option<&Path>) -> Result<Self> {
+        let mut archives: Vec<PathBuf> = Vec::new();
+        for dir in overlay.into_iter().chain(std::iter::once(mod_dir)) {
+            let entries = match std::fs::read_dir(dir) {
+                Ok(e) => e,
+                // An overlay that is simply not there is the normal case for a
+                // retail-only run; the base directory is the one that must exist.
+                Err(e) => {
+                    if std::ptr::eq(dir, mod_dir) {
+                        return Err(anyhow::Error::from(e)
+                            .context(format!("cannot read mod dir {}", mod_dir.display())));
+                    }
+                    log::debug!("no pk3 overlay dir {}; continuing", dir.display());
+                    continue;
+                }
+            };
+            let mut here: Vec<PathBuf> = entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pk3")))
+                .collect();
+            here.sort();
+            archives.extend(here);
+        }
+        Self::from_archives(archives)
+    }
+
     pub fn open(mod_dir: &Path) -> Result<Self> {
         let mut archives: Vec<PathBuf> = std::fs::read_dir(mod_dir)
             .with_context(|| format!("cannot read mod dir {}", mod_dir.display()))?
@@ -33,8 +72,14 @@ impl Pk3Fs {
             .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pk3")))
             .collect();
         archives.sort();
+        Self::from_archives(archives)
+    }
+
+    /// Index an already-collected archive list. Shared by [`Self::open`] and
+    /// [`Self::open_layered`]; the archive order IS the override order.
+    fn from_archives(archives: Vec<PathBuf>) -> Result<Self> {
         if archives.is_empty() {
-            bail!("no .pk3 archives found in {}", mod_dir.display());
+            bail!("no .pk3 archives found");
         }
         let mut index = HashMap::new();
         let mut alias_index = HashMap::new();
@@ -64,7 +109,7 @@ impl Pk3Fs {
         }
         let archives = readable;
         if archives.is_empty() {
-            bail!("no readable .pk3 archives in {}", mod_dir.display());
+            bail!("no readable .pk3 archives");
         }
         Ok(Self {
             archives,

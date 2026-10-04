@@ -20,6 +20,10 @@ struct Args {
     /// Pk3 subdirectory, main for CoD1 or uo for United Offensive
     #[arg(long, default_value = "main")]
     mod_dir: String,
+    /// A pk3 directory searched BEFORE --mod-dir, so original project content
+    /// (custom maps) layers over a retail install without modifying it.
+    #[arg(long)]
+    overlay_dir: Option<std::path::PathBuf>,
     /// UDP port
     #[arg(long, default_value_t = 28960)]
     port: u16,
@@ -88,7 +92,8 @@ fn main() -> Result<()> {
     }
     let dir = args.game_dir.join(&args.mod_dir);
     let fs = std::rc::Rc::new(
-        Pk3Fs::open(&dir).with_context(|| format!("opening game data in {}", dir.display()))?,
+        Pk3Fs::open_layered(&dir, args.overlay_dir.as_deref())
+            .with_context(|| format!("opening game data in {}", dir.display()))?,
     );
     let Some(bsp_path) = fs.resolve_map(&args.map) else {
         bail!("map {} not found in {}", args.map, dir.display());

@@ -45,6 +45,11 @@ struct Args {
     /// Pk3 subdirectory: main for CoD1, uo for United Offensive (untested)
     #[arg(long, default_value = "main")]
     mod_dir: String,
+    /// A pk3 directory searched BEFORE --mod-dir. This is how original project
+    /// content (custom maps) is layered over a retail install without the
+    /// install being modified, copied, or duplicated into this repository.
+    #[arg(long)]
+    overlay_dir: Option<std::path::PathBuf>,
     /// Spawn as a soldier and walk (first person) instead of flying
     #[arg(long)]
     walk: bool,
@@ -722,7 +727,7 @@ fn main() -> Result<()> {
     if let Some(addr) = &args.net_probe {
         // Sound cue resolution needs the game data, the wire-level prints do
         // not, so a failed open only costs the audio line.
-        let fs = match Pk3Fs::open(&dir) {
+        let fs = match Pk3Fs::open_layered(&dir, args.overlay_dir.as_deref()) {
             Ok(fs) => Some(fs),
             Err(e) => {
                 log::warn!(
@@ -783,8 +788,8 @@ fn main() -> Result<()> {
         );
     }
 
-    let fs =
-        Pk3Fs::open(&dir).with_context(|| format!("cannot open game data in {}", dir.display()))?;
+    let fs = Pk3Fs::open_layered(&dir, args.overlay_dir.as_deref())
+        .with_context(|| format!("cannot open game data in {}", dir.display()))?;
 
     if args.list {
         for name in fs.find_maps() {
