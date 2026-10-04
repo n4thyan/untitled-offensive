@@ -119,6 +119,7 @@ Please check:
 |---|---|
 | `cargo fmt` | applied |
 | `cargo build --release` | clean, no warnings |
+| `cargo test --release -p vcod-server` | **514 passed, 0 failed** |
 | `python validate_spawns.py` | 8/8 clear, floored, headroom |
 | `mp_toccoa` dm, 3 bots, 90 s | **4 kills, 7 damage events** |
 | `mp_toccoa` tdm | **fails** — abort loop (above) |
