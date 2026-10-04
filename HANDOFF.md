@@ -1,9 +1,166 @@
 # UNTITLED — Session Handoff
 
 A new classic Call of Duty–era FPS built on the vcod fork, running genuine
-Call of Duty 1.1 content from the user's own retail installation.
+Call of Duty 1.1 content from the user's own retail installation, now with its
+own first original map.
 
-Status as of this checkpoint: **the combat loop works end to end.**
+Status at this checkpoint: **the combat loop works, and `mp_toccoa` is
+playable.**
+
+---
+
+## 0. THIS SESSION: THE TOCCOA MAP
+
+**Map:** `mp_toccoa` — a live-fire training course at Camp Toccoa.
+
+### Built how
+
+No Radiant, no external tool. `tools/toccoa/build_toccoa.py` emits CoD1's
+`IBSP` version 59 directly from a layout description in Python, and
+`package_pk3.py` packs the BSP plus the map's GSC into an overlay pk3.
+
+```bash
+cd tools/toccoa
+python validate_spawns.py     # assert every spawn is usable
+python build_toccoa.py        # layout.py -> out.bsp
+python package_pk3.py         # -> main-untitled/untitled.pk3
+```
+
+`run-dev-match.bat mp_toccoa` runs all three automatically.
+
+| | |
+|---|---|
+| Layout source | `tools/toccoa/layout.py` |
+| BSP compiler | `tools/toccoa/build_toccoa.py` |
+| Packager | `tools/toccoa/package_pk3.py` |
+| Compiled output | `main-untitled/untitled.pk3` → `maps/MP/mp_toccoa.bsp` (generated, gitignored) |
+| Map script | `assets/scripts/mp_toccoa.gsc` (original content) |
+| Pipeline doc | `docs/maps.md` |
+
+### Asset resolution
+
+A layered pk3 search path, `--overlay-dir`, searched **before** the retail
+`main`:
+
+```
+--overlay-dir  main-untitled/                              ours, first
+--game-dir     C:/Program Files (x86)/Call of Duty   retail, read-only
+```
+
+`mp_toccoa` gets its BSP and GSC from ours; every texture, model, sound, menu
+and gametype script resolves from retail. **The retail install is never
+modified and no proprietary asset is copied into the repository** — textures
+are referenced by name.
+
+### Assets used
+
+**CoD1** — 20 materials, every one verified to resolve against the paks:
+
+| Role | Path |
+|---|---|
+| ground | `textures/normandy/ground/dirt@earth_2` |
+| mud / trench | `textures/normandy/ground/dirt@trench_goundalt1` |
+| turf | `textures/normandy/ground/dirt@earthgrass_lpc` |
+| wood siding | `textures/austria/walls/wood@barracksext_siding1` / `_siding2slat` |
+| sandbags | `textures/austria/walls/wood@barracksext_siding2mldy` |
+| crates | `textures/crates/wood@cratepile1` |
+| concrete | `textures/belgium/walls/concrete@bunkerint` |
+| metal | `textures/industrial/metal@corrugatedsteel` |
+| roof | `textures/normandy/walls/wood@siding_gray` |
+
+**Toccoa's own training signage** — this is what makes the map read as a
+training camp rather than generic boxes. The retail training level names each
+drill on a sign, and all of these ship in `textures/training/`:
+
+```
+sign_obstaclecourse   sign_grenadetraining   sign_jumptraining
+sign_tower_e          sign_barracks          sign_covertocover
+sign_weaponstraining  metal_masked@hogwiredark (the HOG wire)
+wood@testtarget                              (target board)
+```
+
+**ET assets used: none** — see §16.
+**Project-owned:** the layout, the BSP compiler, `assets/scripts/mp_toccoa.gsc`.
+
+### Dimensions and layout
+
+Roughly **4000 × 3400 units** (a CoD player is 56 units tall), open to the sky —
+between Killhouse and Nuketown scale, larger than Shipment.
+
+Two protected spawn compounds, diagonal corners, 4 spawn points each:
+
+- **Team A — barracks yard** (south-west): barracks hut with a doorway,
+  equipment crates, sandbag lip, walled on its outer sides.
+- **Team B — equipment/firing yard** (north-east): metal shed, firing benches,
+  crates, sandbag position. Equivalent value, deliberately *not* a visual mirror.
+
+Three interconnecting routes:
+
+- **Route A — obstacle course** (west): five zig-zag hurdles, sandbag chicane,
+  HOG-wire crawl-under, flanking walls in four pieces with four gaps per side.
+- **Route B — central training yard** (middle): the **instructor/observation
+  tower** — four corner legs, platform at 620, rail on two sides only, stair
+  blocks on one approach. Deliberately not a sniper nest: exposed, limited
+  cover, several counters. Low barricades and crates break sightlines.
+- **Route C — firing / grenade course** (east): three recessed firing bays with
+  benches, a roofed grenade structure with a window band, a demolition practice
+  wall, a target board anchoring the long sightline.
+
+**Cross-connections** create loops so fights are not always frontal: course ↔
+central yard, central yard ↔ firing route, a far-north link behind both, and
+perimeter cross-links.
+
+### Tested
+
+| | Result |
+|---|---|
+| `mp_toccoa` dm, 2 bots | loads; bots spawn `pm_type=Normal`, move, fight |
+| `mp_toccoa` dm, 4 bots | **358 distinct bot positions**, **113 samples with damage taken**, health observed at 60 from real hits |
+| `mp_toccoa` render | 18 batches, 3384 draw indices, **18 textures loaded, 0 missing**, collision present |
+| `mp_carentan` regression | unchanged: 248 batches, 81 textures, 0 missing |
+| `mp_toccoa` tdm | **not tested** |
+| Client joining `mp_toccoa` | **not tested** — see §9 |
+
+Renderer clean, collision correct (ground `CONTENTS_TERRAIN 0x4`, structures
+`CONTENTS_SOLID 0x1`).
+
+### Layout problems found
+
+All three were invisible in the BSP and only showed up as bots standing still:
+
+1. The obstacle course's flanking walls were originally solid y=300→2600,
+   sealing it into a 2300-unit corridor. Bots entered and pressed against a wall
+   for an entire match. Now built in pieces with four gaps per side.
+2. The Team B benches and sandbag wall blocked its only western exit, pinning a
+   bot at x=3129 permanently.
+3. Three of eight spawns were buried in geometry. `validate_spawns.py` now
+   asserts every spawn is in open floor with floor below and headroom above; it
+   caught all three on first run and runs on every build.
+
+**Still open:**
+
+- **No kill observed on Toccoa.** Damage lands and bots traverse the map, but in
+  the ~4-minute instrumented runs none died. `mp_carentan` kills reliably with
+  the same code, so this is likely map geometry or LOS density rather than a
+  regression — unproven, and the first thing to chase.
+- Bots still navigate by bearing + jitter, no pathfinding; some take long routes.
+- Spawn-safety is not measured the way the brief asks (deaths immediately after
+  spawn, time to first contact, route usage). No instrumentation exists.
+
+### Engine changes made for this
+
+- **`Pk3Fs::open_layered(mod_dir, overlay)`** — searches an overlay pk3 directory
+  before the base. Within a directory archives sort and later wins, matching
+  retail. A missing overlay is normal, not an error.
+- **`--overlay-dir`** on both `vcod.exe` and `vcod-server.exe`.
+- **Two bot navigation fixes**, so bots traverse a map with interior walls:
+  a bot re-picks its heading while still closing on a nav target rather than
+  only every 20 ticks (which had them arrive and then stand still); and the
+  anti-stuck jitter now applies *only when genuinely stalled* — averaged over a
+  pick-per-tick bot it cancelled itself out and made bots circle their target
+  instead of closing on it.
+
+Full detail in `docs/maps.md`; ET analysis in `docs/et-inventory.md`.
 
 ---
 
@@ -65,9 +222,14 @@ connected to it. Logs land in `dev-logs\`.
 
 ```
 run-dev-match.bat [MAP] [GAMETYPE] [BOTCOUNT]
-run-dev-match.bat mp_carentan dm 4     REM defaults: mp_carentan / dm / 3
-run-dev-match.bat mp_carentan tdm 3
+run-dev-match.bat                        REM mp_toccoa, dm, 3 bots (default)
+run-dev-match.bat mp_toccoa tdm 4
+run-dev-match.bat mp_carentan dm 3
 ```
+
+For `mp_toccoa` it first validates spawns and rebuilds the map from source, then
+starts the server with `--overlay-dir` and launches the client. Logs land in
+`dev-logs\`.
 
 `stop-dev-match.bat` shuts both processes down.
 
@@ -76,17 +238,18 @@ run-dev-match.bat mp_carentan tdm 3
 ```bash
 # server
 ./target/release/vcod-server.exe --game-dir "C:/Program Files (x86)/Call of Duty" \
-    --gametype dm --bots 3 --bots-shoot --port 28960 mp_carentan
+    --overlay-dir main-untitled --gametype dm --bots 3 --bots-shoot --port 28960 mp_toccoa
 
 # client (separate shell)
 ./target/release/vcod.exe --game-dir "C:/Program Files (x86)/Call of Duty" \
-    --connect 127.0.0.1:28960 --team allies --weapon m1carbine_mp
+    --overlay-dir main-untitled --connect 127.0.0.1:28960 --team allies --weapon m1carbine_mp
 ```
 
 ### Offline, no server
 
 ```bash
-./target/release/vcod.exe --game-dir "C:/Program Files (x86)/Call of Duty" --walk mp_carentan
+./target/release/vcod.exe --game-dir "C:/Program Files (x86)/Call of Duty" \
+    --overlay-dir main-untitled --walk mp_toccoa
 ```
 
 ---
@@ -120,9 +283,11 @@ run-dev-match.bat mp_carentan tdm 3
 `mp_powcamp`, `mp_hurtgen`, `mp_pavlov`, `mp_rocket`, `mp_brecourt`,
 `mp_depot`, `mp_dawnville`, `mp_carentan`, plus the single-player maps.
 
-**Actually exercised this session:** `mp_carentan` only (server and client).
+**Actually exercised:** `mp_carentan` (kill + respawn verified, server and client)
+and **`mp_toccoa`** (server + bots; client not yet tested).
 
-**Custom maps:** none yet. This is the next major piece of work.
+**Custom maps:** `mp_toccoa` — see §0 and `docs/maps.md`. Built from
+`tools/toccoa/layout.py`; run-dev-match.bat compiles it on demand.
 
 ---
 
@@ -289,21 +454,24 @@ implementing next — the first two affect bot behaviour and team comms.
    menus resolve. Bots spawn correctly despite it. Cosmetic logging issue.
 6. **Shader coverage is partial** — ~177 lib warnings for unsupported CoD1
    material tokens. Renderable, not exact.
-7. **One map actually tested.** `mp_carentan`. Other maps load but are unverified
-   end to end.
+7. **Two maps actually tested:** `mp_carentan` (full loop) and `mp_toccoa`
+   (loads, bots traverse and take damage, but **no kill observed**). Other retail
+   maps load but are unverified end to end.
+8. **No visual confirmation of the custom map.** See §19 — texture scale, sign
+   placement and tower climbability are all unverified guesses.
 
 ---
 
 ## 15. GIT
 
-Checkpoint commit:
+Checkpoint commits:
 
 ```
-7ed14c16bb79e82a324cb470cdeca246bb338da0
-Playable CoD1 bot combat checkpoint
+ceb7a0c3a25d33ffb73cfa0e6264a31874bdb9a5   Add playable Toccoa training-ground map
+7ed14c16bb79e82a324cb470cdeca246bb338da0   Playable CoD1 bot combat checkpoint
 ```
 
-Working tree clean at that commit. **Nothing pushed anywhere — local only.**
+Working tree clean. **Nothing pushed anywhere — local only.**
 
 ---
 
@@ -318,6 +486,8 @@ Working tree clean at that commit. **Nothing pushed anywhere — local only.**
 | `cargo test -p vcod-common --lib net::snapshot` (debug) | **18 passed, 0 failed** |
 | `mp_carentan` dm, 4 bots | kill + respawn verified |
 | `mp_carentan` tdm, 4 bots | boots clean, 0 errors, 0 missing builtins |
+| `mp_toccoa` dm, 4 bots | loads, bots traverse (358 distinct positions), damage lands, **no kill yet** |
+| `python validate_spawns.py` | 8/8 spawns clear, floored, headroom |
 
 The 2 release failures are **pre-existing upstream test-design issues, not
 regressions**: both are `#[should_panic]` tests asserting on `debug_assert!`
@@ -330,49 +500,101 @@ profile it was never written for.
 
 ## 17. NEXT TASK
 
-**The highest-value next step is the custom Western Front map.**
+**Get a kill on `mp_toccoa`, then look at it.**
 
-The combat loop is proven, so the engine no longer needs proving. What it now
-needs is content that is ours, which is the only thing that makes this a
-project rather than a very capable CoD1 runtime. A compact blockout —
-shallow valley, wooded edges, clearing, ruined stone structure, trench,
-sandbags, craters, flank routes — loadable by this same pipeline, is the
-single thing that most moves the project forward.
+The map loads, renders, collides and hosts bots that traverse it and take
+damage. What it has not yet produced is a death. `mp_carentan` kills reliably
+with identical code, so this is most likely map geometry, LOS density, or bot
+aim at Toccoa's closer ranges — but it is unproven.
 
-Before or alongside it, two cheap wins:
+Then, in order:
 
-- Implement `attackbuttonpressed` and `sayteam`/`sayall` (the remaining
-  builtins that affect bot behaviour).
-- Add cvars for the Quake movement extensions, additive over the recovered
-  retail constants, with vanilla CoD1 as the default.
+1. **Client test on Toccoa.** The join path works on `mp_carentan`; it has
+   never been run against Toccoa.
+2. **tdm on Toccoa.** Untested.
+3. **Spawn-safety instrumentation** — deaths immediately after spawn, time to
+   first contact, route usage, per the brief.
+4. **Quake movement extensions**, additive behind cvars with the recovered
+   retail constants as the default and reference implementation. The obstacle
+   course is purpose-built for it.
+5. **ET deployable mortar** proof-of-concept, if the converter is ever worth it
+   (§16 argues it is not worth it for firearms).
 
 ---
 
-## 18. CHANGES MADE THIS SESSION
+## 18. ET INVENTORY — investigated, conclusion: no firearms
 
-Engine/server:
+Full findings in `docs/et-inventory.md`.
 
-- `getGuid` builtin — unblocked every gametype's `Callback_PlayerConnect`.
-- `getAttachIgnoreCollision` builtin — unblocked `_utility::saveModel`.
-- `takeWeapon` builtin + `WeaponOp::Take(u8)` — unblocked `_teams::givePistol`,
-  which is what stopped players finishing their spawn.
-- Bot menu resolution: bots now resolve `t <idx>` against the menu
-  configstring table rather than the `g_scriptMainMenu` cvar. They were
-  answering `"allies"` to the server-info menu, which only advances on
-  `"close"`, so the join parked forever and no bot ever spawned.
-- Client `auto_reply`: same server-info fix on the client side, which is what
-  let a human client complete the join.
+ET is installed (`...\Steam\steamapps\common\Wolfenstein Enemy Territory`,
+3763 entries: 1167 sounds, 961 models, 645 textures, 117 scripts).
 
-Bot behaviour (new gameplay, not a bugfix):
+**It shares no weapon format with CoD1.** ET weapons are `.mdc` meshes with
+`.weap` text definitions (Quake II / RTCW lineage); CoD1 weapons are `.xmodel`
+with weapon `.gsc` and animscripts (IW lineage). An ET weapon cannot be
+referenced by a CoD1 map, put in a CoD1 pk3, or loaded by this engine at all.
 
-- Enemy-aware navigation: `BotView.nav_target` plus `bot_nav_target` and a
-  widened `BOT_AWARENESS_RANGE` (6000) for steering only. Firing stays bounded
-  by the original `SHOOT_RANGE` (1500) and still requires a clear sightline.
-- Heading jitter on the seek bearing, so a bot blocked by geometry tries a
-  different angle instead of re-picking the identical bearing forever.
+Cross-referencing ET's 40 `.weap` definitions against CoD1's 32:
 
-Housekeeping:
+**Already covered by CoD1 — do not import duplicates.** `colt`, `luger`,
+`silenced_*`, `akimbo_*` → `colt_mp`/`luger_mp`; `thompson`, `mp40`, `sten`,
+`kar98`, `m1_garand`, `fg42`, `panzerfaust` all present; **`mg42` is covered as
+a bipod-deployable with three stance variants** (`mg42_bipod_duck/prone/stand_mp`),
+better integrated than ET's; grenades → `fraggrenade_mp`/`stielhandgranate_mp`;
+`m7` is a Thompson pattern; `binocs` → the sniper-scoped rifles.
 
-- `crates/common/tests/shader_corpus.rs`: `#[cfg]` the Unix-only symlink so
-  the suite compiles on Windows.
-- `run-dev-match.bat`, `stop-dev-match.bat`, `dev-logs/`.
+**Genuinely additive — but deployables and equipment, not firearms:**
+`mortar`/`mortar_set`/`mapmortar`, `landmine`, `dynamite`/`satchel`, `pliers`,
+`binocs`, `ammopack`, `medpack`, `adrenaline`, `syringe`, `smokegrenade`.
+
+The rule this establishes, and which should stand:
+
+> **CoD1/UO version first when the weapon already exists.
+> ET fills gaps or supplies distinctive mechanics/content.**
+
+**No ET weapon was imported.** Every ET firearm is already covered, several
+better by CoD1, and importing one is a converter project (`.mdc` → `.xmodel` for
+mesh and skeleton, `.weap` → CoD1 weapon `.gsc` + animscript for behaviour) for
+zero gameplay gain.
+
+If the mortar is ever prototyped, start from a **deployable prop** — mostly a
+static model plus a muzzle — rather than a skeletal weapon. That keeps the work
+to proving format translation without ET's animation or AI. It should be adapted
+to CoD lethality, fire rates, respawn economics and HUD treatment rather than
+keeping ET balance.
+
+---
+
+## 19. WHAT NATHAN MUST VISUALLY INSPECT
+
+My model has no image input and the vision tool is rate-limited, so **nothing
+here is confirmed by eye.** Renderer statistics and server logs are the
+evidence. Please check:
+
+1. **Does `mp_toccoa` look like a place?** Textures resolve and geometry renders,
+   but nobody has seen it. Texture scale (`uv_scale = 1/32`) is a guess.
+2. **Are the training signs legible and sensibly placed?** They are thin panels;
+   orientation and facing were never checked visually.
+3. **Does the layout read as three routes?** The cross-connections were designed
+   on paper; whether they actually enable flanking in play is unverified.
+4. **Is the instructor tower reachable and appropriately exposed?** The stair
+   blocks are a guess at climbability.
+5. **Can a player join and fight bots on Toccoa?** The client was verified
+   joining a `mp_carentan` server, but **never tested against Toccoa**.
+
+---
+
+## 20. FILE INDEX
+
+| Path | What |
+|---|---|
+| `tools/toccoa/layout.py` | the map — edit this |
+| `tools/toccoa/build_toccoa.py` | BSP compiler |
+| `tools/toccoa/package_pk3.py` | pk3 packager |
+| `tools/toccoa/validate_spawns.py` | build-time spawn assertion |
+| `assets/scripts/mp_toccoa.gsc` | original per-map script |
+| `docs/maps.md` | custom map pipeline documentation |
+| `docs/et-inventory.md` | ET inventory and the import decision |
+| `run-dev-match.bat` | one-click match launcher (default: mp_toccoa) |
+| `stop-dev-match.bat` | shut down server + client |
+| `main-untitled/` | generated overlay (gitignored) |
