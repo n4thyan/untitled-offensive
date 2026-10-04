@@ -296,15 +296,35 @@ implementing next — the first two affect bot behaviour and team comms.
 
 ## 15. GIT
 
-Commit hash: **see §17** (recorded after the final test run).
+Checkpoint commit:
 
-Nothing has been pushed anywhere. Local only.
+```
+7ed14c16bb79e82a324cb470cdeca246bb338da0
+Playable CoD1 bot combat checkpoint
+```
+
+Working tree clean at that commit. **Nothing pushed anywhere — local only.**
 
 ---
 
-## 16. FINAL TEST RESULT
+## 16. TEST RESULTS
 
-Recorded in the next section after the suite completed.
+| Suite | Result |
+|---|---|
+| `cargo build --release` | clean, no warnings |
+| `cargo fmt` | applied |
+| `cargo test --release` (server) | **399 passed, 0 failed** |
+| `cargo test --release` (common) | **635 passed, 2 failed** |
+| `cargo test -p vcod-common --lib net::snapshot` (debug) | **18 passed, 0 failed** |
+| `mp_carentan` dm, 4 bots | kill + respawn verified |
+| `mp_carentan` tdm, 4 bots | boots clean, 0 errors, 0 missing builtins |
+
+The 2 release failures are **pre-existing upstream test-design issues, not
+regressions**: both are `#[should_panic]` tests asserting on `debug_assert!`
+(`snapshot.rs:1171` and `:1199`), which release builds strip. Both pass under
+the debug profile, which is how the assertions are meant to be checked. Left
+alone deliberately — "fixing" them would mean weakening a real guard to suit a
+profile it was never written for.
 
 ---
 
