@@ -4,12 +4,143 @@ A new classic Call of Duty–era FPS built on the vcod fork, running genuine
 Call of Duty 1.1 content from the user's own retail installation, now with its
 own first original map.
 
-Status at this checkpoint: **the combat loop works, and `mp_toccoa` is
-playable.**
+**End-of-day checkpoint: `mp_toccoa` is playable.** A graphical client joins,
+spawns into the match with an M1 Carbine, and bots fight and die on the map.
 
 ---
 
-## 0. THIS SESSION: THE TOCCOA MAP
+# 0. END OF DAY — PLAYABLE TONIGHT
+
+```bat
+cd C:\Users\natha\projects\untitled
+run-dev-match.bat
+```
+
+That validates the 8 spawns, rebuilds `mp_toccoa` from `tools/toccoa/layout.py`,
+starts a dedicated server with 3 bots, waits, and launches the client already
+connected as **allies** with an **m1carbine_mp**. Click the window to capture the
+mouse.
+
+Optional arguments still work:
+
+```bat
+run-dev-match.bat mp_toccoa dm 3     REM the default
+run-dev-match.bat mp_toccoa tdm 4
+run-dev-match.bat mp_carentan dm 3
+```
+
+`stop-dev-match.bat` shuts both processes down. Logs land in `dev-logs\`.
+
+## Verified on Toccoa
+
+| | |
+|---|---|
+| client connected | **yes** |
+| human answered the menus | **yes** — serverinfo → team → weapon, all three |
+| human spawned | **yes** — `pm_type=Normal` at (3000, 2760, 8) |
+| bots spawned | **yes** — all 3 reach `Normal` |
+| movement | **yes** — bots traverse; human movement is client-side and unmodified |
+| weapons | **yes** — m1carbine_mp (allies), kar98k_mp (axis) |
+| damage | **yes** — `D;` events with real hit locations and damage values |
+| **bot kill observed** | **yes — 4 kills / 7 damage events in 90 s** |
+| human kill observed | no — the test client sits still; not driven by input here |
+| death | **yes** — every kill runs `player_die` and the obituary callback |
+| respawn | **yes** — kills are followed by fresh spawns in the same match |
+| DM | **yes** |
+| TDM | **no — see the bug below** |
+
+### The "no kills on Toccoa" note from last session was wrong
+
+It was an instrumentation gap, not a map fault. Last session's probes watched
+for `Item:` lines, which are not spawn indicators. Reading the actual `K;`
+obituary events shows Toccoa produces kills at a normal rate: **6 kills in ~45 s**
+bots-only, **4 kills in 90 s** in the final regression run. No map change was
+needed. The earlier "358 distinct bot positions / 113 samples with damage" figure
+was real too — combat was working; it was just not being counted correctly.
+
+## TDM on Toccoa is broken — a real, separate bug
+
+`run-dev-match.bat mp_toccoa tdm 4` **does not work**: the server enters a
+restart loop, logging `Aborting level - gametype is not supported` roughly 20
+times a second, and no match starts.
+
+What is established:
+
+- **TDM itself is fine.** `mp_carentan` + tdm runs clean — both teams assigned,
+  weapons chosen, **1 kill in 70 s**, 0 errors, 0 aborts.
+- **DM on Toccoa is fine** (above).
+- **It is Toccoa-specific**, and **not caused by our map script.** Replacing
+  `assets/scripts/mp_toccoa.gsc` with a 9-line minimal script changed nothing —
+  still 892 aborts in 45 s.
+- So the cause is either the Toccoa BSP's entity list or our handling of it under
+  a team gametype.
+
+**Best current hypothesis:** the BSP only carries `mp_deathmatch_spawn` entities.
+TDM needs team-specific spawns, and a retail TDM map declares them differently. The
+open question is whether the fix belongs in `tools/toccoa/layout.py` (emit the
+spawn classes TDM expects) or in the server (accept DM spawns under TDM the way
+retail does). That was not resolved tonight and is deliberately left as the first
+item for the next session.
+
+Not a regression: DM on Toccoa worked before this session and still does.
+
+## Map
+
+- **Dimensions** ~4000 × 3400 units, open sky. 94 brushes, 1104 triangles.
+- **Spawns** 8 (4 per team), all validated clear, floored and with headroom.
+- **Geometry changed this session:** none. No tuning was required — the map was
+  already producing kills once counted correctly. The three layout faults found
+  yesterday (sealed obstacle corridor, Team B's blocked west exit, 3 buried
+  spawns) remain fixed by that session's work.
+- **Largest remaining layout weakness:** bots still navigate by bearing plus
+  jitter rather than pathfinding, so on a map with more interior walls than
+  Carentan some take long routes. Cross-route flanking is designed on paper but
+  unverified in play.
+
+## Visual checks for Nathan
+
+My model has no image input and the vision tool is rate-limited, so **nothing
+here is confirmed by eye.** Renderer statistics and server logs are the evidence.
+Please check:
+
+1. **Does `mp_toccoa` look like a place?** Textures resolve (18 loaded, 0 missing)
+   and geometry renders, but nobody has seen it. Texture scale (`1/32`) is a guess.
+2. **Are the training signs legible and correctly facing?** They are thin panels;
+   orientation was never checked visually.
+3. **Does the layout read as three routes?** The cross-connections were designed on
+   paper; whether they enable flanking in play is unverified.
+4. **Is the instructor tower reachable and appropriately exposed?** The stair
+   blocks are a guess at climbability.
+5. **Any obviously ugly or floating geometry?**
+
+## Tests
+
+| Suite | Result |
+|---|---|
+| `cargo fmt` | applied |
+| `cargo build --release` | clean, no warnings |
+| `python validate_spawns.py` | 8/8 clear, floored, headroom |
+| `mp_toccoa` dm, 3 bots, 90 s | **4 kills, 7 damage events** |
+| `mp_toccoa` tdm | **fails** — abort loop (above) |
+| `mp_carentan` dm, 3 bots | boots clean, 0 aborts |
+| `mp_carentan` tdm, 4 bots | boots clean, 1 kill, 0 errors, 0 aborts |
+
+`cargo test -p vcod-server` is reported in §14.
+
+## Git
+
+- Checkpoint commit: see §14 (this session's commit).
+- Working tree clean at that commit.
+- **pushed: NO** — local only.
+- **No proprietary data tracked.** `.gitignore` blocks every CoD asset extension
+  (`*.pk3`, `*.bsp`, `*.xmodel`, `*.xanim`, `*.gsc`, `*.tga`, `*.dds`, `*.wav`)
+  and the generated overlay, with an explicit negation so our own
+  `assets/scripts/*.gsc` is versioned. Textures are referenced by name, never
+  copied.
+
+---
+
+# 1. CURRENT STATE — what is actually playable
 
 **Map:** `mp_toccoa` — a live-fire training course at Camp Toccoa.
 
@@ -454,9 +585,8 @@ implementing next — the first two affect bot behaviour and team comms.
    menus resolve. Bots spawn correctly despite it. Cosmetic logging issue.
 6. **Shader coverage is partial** — ~177 lib warnings for unsupported CoD1
    material tokens. Renderable, not exact.
-7. **Two maps actually tested:** `mp_carentan` (full loop) and `mp_toccoa`
-   (loads, bots traverse and take damage, but **no kill observed**). Other retail
-   maps load but are unverified end to end.
+7. **TDM on `mp_toccoa` aborts the level** in a restart loop — see §0. DM is
+   fine, and TDM is fine on `mp_carentan`.
 8. **No visual confirmation of the custom map.** See §19 — texture scale, sign
    placement and tower climbability are all unverified guesses.
 
@@ -486,7 +616,7 @@ Working tree clean. **Nothing pushed anywhere — local only.**
 | `cargo test -p vcod-common --lib net::snapshot` (debug) | **18 passed, 0 failed** |
 | `mp_carentan` dm, 4 bots | kill + respawn verified |
 | `mp_carentan` tdm, 4 bots | boots clean, 0 errors, 0 missing builtins |
-| `mp_toccoa` dm, 4 bots | loads, bots traverse (358 distinct positions), damage lands, **no kill yet** |
+| `mp_toccoa` dm, 3 bots, 90 s | **4 kills, 7 damage events** |
 | `python validate_spawns.py` | 8/8 spawns clear, floored, headroom |
 
 The 2 release failures are **pre-existing upstream test-design issues, not
@@ -498,27 +628,24 @@ profile it was never written for.
 
 ---
 
-## 17. NEXT TASK
+## 17. NEXT SESSION
 
-**Get a kill on `mp_toccoa`, then look at it.**
+**Fix TDM on `mp_toccoa`.** It is the one known-broken thing in an otherwise
+working build, it is narrow, and everything else is already proven tonight. The
+question to answer first: does the fix belong in `tools/toccoa/layout.py` (emit
+the team spawn classes TDM expects) or in the server (accept DM spawns under TDM
+the way retail does)? Compare a retail TDM map's entity list against ours to
+decide.
 
-The map loads, renders, collides and hosts bots that traverse it and take
-damage. What it has not yet produced is a death. `mp_carentan` kills reliably
-with identical code, so this is most likely map geometry, LOS density, or bot
-aim at Toccoa's closer ranges — but it is unproven.
+Once TDM runs, the next candidates, in order:
 
-Then, in order:
-
-1. **Client test on Toccoa.** The join path works on `mp_carentan`; it has
-   never been run against Toccoa.
-2. **tdm on Toccoa.** Untested.
-3. **Spawn-safety instrumentation** — deaths immediately after spawn, time to
-   first contact, route usage, per the brief.
-4. **Quake movement extensions**, additive behind cvars with the recovered
-   retail constants as the default and reference implementation. The obstacle
-   course is purpose-built for it.
-5. **ET deployable mortar** proof-of-concept, if the converter is ever worth it
-   (§16 argues it is not worth it for firearms).
+1. **Quake movement extensions**, additive behind cvars with the recovered retail
+   constants as the default. The obstacle course is purpose-built for it.
+2. **Toccoa visual polish** — texture scale, sign placement, tower stairs. All
+   three are unverified guesses waiting on a human eye.
+3. **Bots pathfinding** instead of bearing + jitter, which is the map's biggest
+   remaining gameplay weakness.
+4. **Create-a-Class foundation** (no perks).
 
 ---
 
