@@ -1,0 +1,18 @@
+//! The CoD 1.1 dedicated server. Transport lives in `main.rs`, so the same
+//! `Server` drives the UDP loop and the tests.
+
+pub mod archive;
+pub mod bots;
+pub mod client;
+pub mod configstrings;
+pub mod console;
+pub mod cvars;
+pub mod follow;
+pub mod game;
+pub mod items;
+pub mod server;
+pub mod spectate;
+pub mod weapons;
+pub mod world;
+
+pub use server::{Server, ServerConfig};

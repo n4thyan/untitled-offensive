@@ -1,0 +1,1844 @@
+//! Weapon state machine: picks the viewmodel clip (idle, fire, rechamber,
+//! reload, ADS) from LMB/RMB/R input and weapon-file times. Pure logic.
+//!
+//! Checked against the six WALK_LOADOUT files. Not modelled here: segmented
+//! reloads, altWeapon. The sway, idle and kick keys are parsed into
+//! `AimDef` for the server's aim block (`crate::pmove::aim`); this file's
+//! own viewmodel machine still ignores them. `adsBobFactor` scales the walk
+//! bob on the gun down the sight (combat doc, 15.2).
+
+use crate::pk3::Pk3Fs;
+use anyhow::{anyhow, Result};
+use std::collections::HashMap;
+
+/// Retail's `cg_fov` default: horizontal degrees across the whole view
+/// (docs/research/xmodel-v14-format.md, "The view fov").
+pub const CG_FOV: f32 = 80.0;
+
+/// The view's horizontal fov in degrees, as retail's cgame computes it each
+/// frame: `CG_FOV` zoomed toward `adsZoomFov` over the last `adsZoomInFrac`
+/// (sight rising, `zooming_in`) or `adsZoomOutFrac` of the sight fraction,
+/// 90 at intermission and 55 on a mounted gun. The viewmodel is drawn with
+/// the same fov (docs/research/xmodel-v14-format.md, "The view fov").
+pub fn view_fov_x(
+    def: Option<&WeaponDef>,
+    frac: f32,
+    zooming_in: bool,
+    intermission: bool,
+    mounted: bool,
+) -> f32 {
+    if mounted {
+        return 55.0;
+    }
+    if intermission {
+        return 90.0;
+    }
+    let mut fov = CG_FOV;
+    if let Some(def) = def.filter(|d| d.aim_down_sight) {
+        if frac == 1.0 {
+            fov = def.ads_zoom_fov;
+        } else if frac != 0.0 {
+            let tail = if zooming_in {
+                def.ads_zoom_in_frac
+            } else {
+                def.ads_zoom_out_frac
+            };
+            let into = frac - (1.0 - tail);
+            if into > 0.0 {
+                fov -= (fov - def.ads_zoom_fov) * into / tail;
+            }
+        }
+    }
+    fov
+}
+
+/// Which way the sight last started moving: set when `fWeaponPosFrac` leaves
+/// 0 or 1 upward, cleared when it leaves downward, held otherwise, and only
+/// tracked for a weapon with `aimDownSight`. Retail's zoom and crosshair
+/// shrink both read it (docs/research/cod11-hud-protocol.md, "Crosshair").
+#[derive(Default)]
+pub struct SightDirection {
+    prev: f32,
+    raising: bool,
+}
+
+impl SightDirection {
+    pub fn step(&mut self, weapon: Option<&WeaponDef>, frac: f32) -> bool {
+        if weapon.is_some_and(|d| d.aim_down_sight) {
+            let at_rest = |f: f32| f == 0.0 || f == 1.0;
+            if !at_rest(frac) && at_rest(self.prev) && frac != self.prev {
+                self.raising = self.prev <= frac;
+            }
+            self.prev = frac;
+        }
+        self.raising
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum WeaponAnim {
+    Idle,
+    Fire,
+    LastShot,
+    Rechamber,
+    Reload,
+    AdsUp,
+    AdsDown,
+    AdsFire,
+    AdsLastShot,
+    AdsRechamber,
+    Raise,
+    Melee,
+    Drop,
+    ReloadEmpty,
+    ReloadStart,
+    ReloadEnd,
+    AltDrop,
+    AltRaise,
+    /// The grenade pullback hold, wire index 17 (combat doc, 1.11); the
+    /// pmove side names the same index `WEAP_GRENADE_PULLBACK`.
+    HoldFire,
+    /// Shown in place of `Idle` when the clip is dry and the file names one.
+    EmptyIdle,
+}
+
+impl WeaponAnim {
+    pub const ALL: [WeaponAnim; 20] = [
+        WeaponAnim::Idle,
+        WeaponAnim::Fire,
+        WeaponAnim::LastShot,
+        WeaponAnim::Rechamber,
+        WeaponAnim::Reload,
+        WeaponAnim::AdsUp,
+        WeaponAnim::AdsDown,
+        WeaponAnim::AdsFire,
+        WeaponAnim::AdsLastShot,
+        WeaponAnim::AdsRechamber,
+        WeaponAnim::Raise,
+        WeaponAnim::Melee,
+        WeaponAnim::Drop,
+        WeaponAnim::ReloadEmpty,
+        WeaponAnim::ReloadStart,
+        WeaponAnim::ReloadEnd,
+        WeaponAnim::AltDrop,
+        WeaponAnim::AltRaise,
+        WeaponAnim::HoldFire,
+        WeaponAnim::EmptyIdle,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            WeaponAnim::Idle => "idleAnim",
+            WeaponAnim::Fire => "fireAnim",
+            WeaponAnim::LastShot => "lastShotAnim",
+            WeaponAnim::Rechamber => "rechamberAnim",
+            WeaponAnim::Reload => "reloadAnim",
+            WeaponAnim::AdsUp => "adsUpAnim",
+            WeaponAnim::AdsDown => "adsDownAnim",
+            WeaponAnim::AdsFire => "adsFireAnim",
+            WeaponAnim::AdsLastShot => "adsLastShotAnim",
+            WeaponAnim::AdsRechamber => "adsRechamberAnim",
+            WeaponAnim::Raise => "raiseAnim",
+            WeaponAnim::Melee => "meleeAnim",
+            WeaponAnim::Drop => "dropAnim",
+            WeaponAnim::ReloadEmpty => "reloadEmptyAnim",
+            WeaponAnim::ReloadStart => "reloadStartAnim",
+            WeaponAnim::ReloadEnd => "reloadEndAnim",
+            WeaponAnim::AltDrop => "altDropAnim",
+            WeaponAnim::AltRaise => "altRaiseAnim",
+            WeaponAnim::HoldFire => "holdFireAnim",
+            WeaponAnim::EmptyIdle => "emptyIdleAnim",
+        }
+    }
+
+    /// The four readings `view_anim` gives wire index 0: none of them has a
+    /// weapon-file length of its own, so `resolve` never times one out.
+    fn is_idle_kind(self) -> bool {
+        matches!(
+            self,
+            WeaponAnim::Idle | WeaponAnim::EmptyIdle | WeaponAnim::AdsUp | WeaponAnim::AdsDown
+        )
+    }
+}
+
+/// Alias names from the weapon file's `*Sound` keys
+/// (docs/research/cod11-sound-system.md, section 8). Blank is the norm and
+/// means no sound, so it parses as `None` without a warning.
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct WeaponSounds {
+    pub fire: Option<String>,
+    pub last_shot: Option<String>,
+    pub rechamber: Option<String>,
+    pub reload: Option<String>,
+    pub reload_empty: Option<String>,
+    pub reload_start: Option<String>,
+    pub reload_end: Option<String>,
+    pub alt_switch: Option<String>,
+    pub raise: Option<String>,
+    pub putaway: Option<String>,
+    pub pullback: Option<String>,
+    pub pickup: Option<String>,
+    /// In-flight loop. Unused: vcod tracks no missile entities.
+    pub projectile: Option<String>,
+    pub proj_explosion: Option<String>,
+    /// `EV_MELEE_SWIPE` plays `melee_swing_large` instead of `_small`.
+    pub rifle_bullet: bool,
+    /// Suppresses `player_out_of_ammo` on `EV_NOAMMO`.
+    pub clip_only: bool,
+}
+
+fn opt_str(map: &HashMap<String, String>, key: &str) -> Option<String> {
+    map.get(key)
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+impl WeaponSounds {
+    pub fn from_map(map: &HashMap<String, String>) -> WeaponSounds {
+        WeaponSounds {
+            fire: opt_str(map, "fireSound"),
+            last_shot: opt_str(map, "lastShotSound"),
+            rechamber: opt_str(map, "rechamberSound"),
+            reload: opt_str(map, "reloadSound"),
+            reload_empty: opt_str(map, "reloadEmptySound"),
+            reload_start: opt_str(map, "reloadStartSound"),
+            reload_end: opt_str(map, "reloadEndSound"),
+            alt_switch: opt_str(map, "altSwitchSound"),
+            raise: opt_str(map, "raiseSound"),
+            putaway: opt_str(map, "putawaySound"),
+            pullback: opt_str(map, "pullbackSound"),
+            pickup: opt_str(map, "pickupSound"),
+            projectile: opt_str(map, "projectileSound"),
+            proj_explosion: opt_str(map, "projExplosionSound"),
+            rifle_bullet: parse_bool(map, "rifleBullet", false),
+            clip_only: parse_bool(map, "clipOnly", false),
+        }
+    }
+}
+
+/// The keys `BG_CalculateWeaponAngles`, `BG_CalculateViewAngles` and
+/// `BG_CalculateWeaponPosition_Sway` read (`crate::pmove::aim`, combat doc
+/// section 15). An absent key reads as 0, as it does off retail's zeroed
+/// struct.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AimDef {
+    /// `adsOverlayReticle` other than `none`: a scope, which freezes the
+    /// turn sway for as long as the sight is up at all.
+    pub ads_overlay_reticle: bool,
+    pub hip_idle_amount: f32,
+    pub ads_idle_amount: f32,
+    pub idle_crouch_factor: f32,
+    pub idle_prone_factor: f32,
+    /// Degrees of pitch the sight adds at `fWeaponPosFrac` 1.
+    pub ads_aim_pitch: f32,
+    pub gun_max_pitch: f32,
+    pub gun_max_yaw: f32,
+    /// `[hip, ads]` for each of the six turn-sway keys.
+    pub sway_max_angle: [f32; 2],
+    pub sway_lerp_speed: [f32; 2],
+    pub sway_pitch_scale: [f32; 2],
+    pub sway_yaw_scale: [f32; 2],
+    pub sway_horiz_scale: [f32; 2],
+    pub sway_vert_scale: [f32; 2],
+    /// `standRotP/Y/R`, `duckedRot*`, `proneRot*`: the tilt the gun takes
+    /// at full speed in each stance.
+    pub stand_rot: [f32; 3],
+    pub ducked_rot: [f32; 3],
+    pub prone_rot: [f32; 3],
+    pub pos_rot_rate: f32,
+    pub pos_prone_rot_rate: f32,
+    pub stand_rot_min_speed: f32,
+    pub ducked_rot_min_speed: f32,
+    pub prone_rot_min_speed: f32,
+    /// `[hip, ads]` for each of the four gun-kick spring keys.
+    pub gun_kick_accel: [f32; 2],
+    pub gun_kick_speed_max: [f32; 2],
+    pub gun_kick_speed_decay: [f32; 2],
+    pub gun_kick_static_decay: [f32; 2],
+}
+
+impl AimDef {
+    pub fn from_map(map: &HashMap<String, String>) -> AimDef {
+        let f = |key: &str| parse_num(map, key, 0.0f32);
+        let pair = |key: &str| [f(key), f(&format!("ads{}", capitalize(key)))];
+        let rot = |stance: &str| {
+            [
+                f(&format!("{stance}RotP")),
+                f(&format!("{stance}RotY")),
+                f(&format!("{stance}RotR")),
+            ]
+        };
+        AimDef {
+            ads_overlay_reticle: opt_str(map, "adsOverlayReticle")
+                .is_some_and(|r| !r.eq_ignore_ascii_case("none")),
+            hip_idle_amount: f("hipIdleAmount"),
+            ads_idle_amount: f("adsIdleAmount"),
+            idle_crouch_factor: f("idleCrouchFactor"),
+            idle_prone_factor: f("idleProneFactor"),
+            ads_aim_pitch: f("adsAimPitch"),
+            gun_max_pitch: f("gunMaxPitch"),
+            gun_max_yaw: f("gunMaxYaw"),
+            sway_max_angle: pair("swayMaxAngle"),
+            sway_lerp_speed: pair("swayLerpSpeed"),
+            sway_pitch_scale: pair("swayPitchScale"),
+            sway_yaw_scale: pair("swayYawScale"),
+            sway_horiz_scale: pair("swayHorizScale"),
+            sway_vert_scale: pair("swayVertScale"),
+            stand_rot: rot("stand"),
+            ducked_rot: rot("ducked"),
+            prone_rot: rot("prone"),
+            pos_rot_rate: f("posRotRate"),
+            pos_prone_rot_rate: f("posProneRotRate"),
+            stand_rot_min_speed: f("standRotMinSpeed"),
+            ducked_rot_min_speed: f("duckedRotMinSpeed"),
+            prone_rot_min_speed: f("proneRotMinSpeed"),
+            gun_kick_accel: [f("hipGunKickAccel"), f("adsGunKickAccel")],
+            gun_kick_speed_max: [f("hipGunKickSpeedMax"), f("adsGunKickSpeedMax")],
+            gun_kick_speed_decay: [f("hipGunKickSpeedDecay"), f("adsGunKickSpeedDecay")],
+            gun_kick_static_decay: [f("hipGunKickStaticDecay"), f("adsGunKickStaticDecay")],
+        }
+    }
+}
+
+fn capitalize(key: &str) -> String {
+    let mut c = key.chars();
+    match c.next() {
+        Some(first) => first.to_ascii_uppercase().to_string() + c.as_str(),
+        None => String::new(),
+    }
+}
+
+/// Times in seconds.
+#[derive(Clone)]
+pub struct WeaponDef {
+    pub clip_size: u32, // >= 1
+    pub fire_time: f32,
+    /// Holds the next shot off inside `fireTime`; 0 on every stock bullet
+    /// weapon (docs/research/cod11-combat.md, section 1.3).
+    pub fire_delay: f32,
+    pub rechamber_time: f32,
+    /// When the bolt's spent case leaves the gun inside `rechamberTime`.
+    pub rechamber_bolt_time: f32,
+    pub reload_time: f32,
+    /// The reload a dry clip runs instead of `reload_time`.
+    pub reload_empty_time: f32,
+    /// When inside the reload the rounds land (combat doc, section 1.7).
+    pub reload_add_time: f32,
+    pub reload_start_time: f32,
+    pub reload_start_add_time: f32,
+    pub reload_end_time: f32,
+    /// A reload of one round at a time, with its own start and end states
+    /// (enfield, kar98k_sniper and springfield are the stock three).
+    pub segmented_reload: bool,
+    /// Refuses a reload that would not add a full `reload_ammo_add`
+    /// (combat doc, section 1.7).
+    pub no_partial_reload: bool,
+    pub raise_time: f32,
+    /// `aimDownSight`: whether the weapon has a sight at all. A weapon
+    /// without one holds `ps.fWeaponPosFrac` at 0 and never takes the ADS
+    /// flag (combat doc, section 1.13). Absent on the grenades and the
+    /// mounted MGs, which reads the same as 0.
+    pub aim_down_sight: bool,
+    /// `moveSpeedScale`: the walk mover multiplies its wish speed by it
+    /// (`pmove::wish`). 1.18 on the carbine, 1.2 on the frag.
+    pub move_speed_scale: f32,
+    pub ads_trans_in: f32,
+    pub ads_trans_out: f32,
+    /// `adsReloadTransTime`: how much of the tail of a reload the sight may
+    /// come back up over (combat doc, 1.13). 0.6 on most stock files.
+    pub ads_reload_trans_time: f32,
+    /// `adsFire`: the weapon fires from the sight only, so the fraction is
+    /// forced to 1 while a shot is in flight and the shot's own delay is
+    /// what is left of the raise. `panzerfaust_mp` is the one stock MP file
+    /// that sets it.
+    pub ads_fire: bool,
+    /// Horizontal degrees; `CG_FOV` when the file names none.
+    pub ads_zoom_fov: f32,
+    /// The tail of the sight fraction the zoom runs over, rising and falling.
+    pub ads_zoom_in_frac: f32,
+    pub ads_zoom_out_frac: f32,
+    pub ads_view_bob_mult: f32,
+    /// Second ADS bob multiplier the files carry separately; 1.0 changes
+    /// nothing, thompson/springfield ship 0 (bob frozen when fully aimed).
+    /// Semantics INFERRED from the values; no decompilation evidence yet.
+    pub ads_bob_factor: f32,
+    /// `semiAuto 0` fires while the button is held at `fireTime` cadence.
+    /// The eight stock files that omit the key -- the four grenades, the
+    /// three bipod mg42s and the PTRS41 -- are not semi-automatic, so the
+    /// default is off.
+    pub semi_auto: bool,
+    /// Reserve rounds behind the clip (`startAmmo`).
+    pub start_ammo: u32,
+    pub bolt_action: bool,
+    /// Dropped-weapon xmodel, `xmodel/` prefix stripped.
+    pub world_model: Option<String>,
+    /// Third-person muzzle flash, a full `fx/*.efx` path as written
+    /// (docs/research/cod11-events-and-fx.md, section 5b). `None` lets
+    /// `fx::registry::resolve` pick a class-based flash.
+    pub world_flash_effect: Option<String>,
+    /// First-person muzzle flash, on the viewmodel's `tag_flash` (same doc
+    /// section).
+    pub view_flash_effect: Option<String>,
+    /// Killfeed material, kept verbatim: `Pk3Fs` resolves the `@` itself.
+    /// `None` when absent or empty; the killfeed then uses the means-of-death
+    /// icon (docs/research/cod11-hud-protocol.md, section 2).
+    pub kill_icon: Option<String>,
+    /// Double-width `kill_icon` (hud-protocol doc, section 2).
+    pub wide_kill_icon: bool,
+    pub sounds: WeaponSounds,
+    pub aim: AimDef,
+    pub damage: i32,
+    pub melee_damage: i32,
+    pub melee_delay: f32,
+    pub melee_time: f32,
+    /// Grenades only: seconds from pullback to detonation, and how long the
+    /// pin stays held before the trigger may release (combat doc 1.11).
+    pub fuse_time: f32,
+    pub hold_fire_time: f32,
+    pub explosion_radius: f32,
+    pub explosion_inner_damage: i32,
+    pub explosion_outer_damage: i32,
+    /// Units per second along the view, and the extra lift added to z.
+    pub projectile_speed: f32,
+    pub projectile_speed_up: f32,
+    /// `xmodel/` stripped, as `world_model` is.
+    pub projectile_model: Option<String>,
+    pub proj_impact_explode: bool,
+    pub max_ammo: u32,
+    /// `clipOnly`: the weapon has no reserve at all, so a give writes only
+    /// `ammoclip[clip_index]`. VERIFIED from the retail spawn capture: the
+    /// frag's file reads `clipOnly 1` with `maxAmmo 3`, and the spawn line
+    /// carries `clip=6:3` with no `ammo` entry for index 6
+    /// (docs/research/cod11-combat.md, section 9.2).
+    pub clip_only: bool,
+    /// Rounds one loop segment of a segmented reload loads; 0 fills the clip.
+    pub reload_ammo_add: u32,
+    /// Rounds the start segment loads; 0 loads none (combat doc, 1.7).
+    pub reload_start_add: u32,
+    pub drop_time: f32,
+    /// The name `BG_SetupAmmoIndexes` looks up (lowercased) to assign
+    /// [`WeaponDef::ammo_index`]; see docs/protocol-1.1.md, "How `ammo[]` and
+    /// `ammoclip[]` are indexed".
+    pub ammo_name: String,
+    /// Same rule as `ammo_name`, but its own namespace and its own index
+    /// (`ammo_index`/`clip_index` never share one table).
+    pub clip_name: String,
+    pub weapon_class: String,
+    /// `weaponType`, lowercased: `bullet` or `grenade` on every stock file.
+    /// Retail's `PM_Weapon` keys its grenade branches on this being type 1
+    /// (docs/research/cod11-combat.md, section 1.11).
+    pub weapon_type: String,
+    pub hip_spread_stand_min: f32,
+    pub hip_spread_ducked_min: f32,
+    pub hip_spread_prone_min: f32,
+    pub hip_spread_max: f32,
+    pub hip_spread_fire_add: f32,
+    pub hip_spread_decay_rate: f32,
+    /// Per degree of view movement, and per frame with a movement axis held.
+    /// Both feed `PM_AdjustAimSpreadScale` (combat doc, 2.1). `bar_mp` and
+    /// `bar_slow_mp` are the only stock MP files with a non-zero turn add.
+    pub hip_spread_turn_add: f32,
+    pub hip_spread_move_add: f32,
+    /// Stance multipliers on the decay rate, same function.
+    pub hip_spread_ducked_decay: f32,
+    pub hip_spread_prone_decay: f32,
+    pub ads_spread: f32,
+    /// Index into `ps.ammo`, assigned by `WeaponTable::load` per the rule in
+    /// docs/protocol-1.1.md, "How `ammo[]` and `ammoclip[]` are indexed"; 0
+    /// until the table assigns it.
+    pub ammo_index: usize,
+    /// Index into `ps.ammoclip`, same rule, separate namespace from
+    /// `ammo_index`.
+    pub clip_index: usize,
+    /// `displayName`, the localized key the pickup's `f` line carries.
+    pub display_name: String,
+    /// `dropAmmoMin`/`dropAmmoMax`: the reserve an item with no `count`
+    /// hands out (docs/research/cod11-items.md, section 4).
+    pub drop_ammo_min: i32,
+    pub drop_ammo_max: i32,
+    /// `sharedAmmoCap`, and the name that groups the weapons under it.
+    pub shared_ammo_cap: i32,
+    pub shared_ammo_cap_name: String,
+    /// `weaponSlot` as written, lowercased; `WeaponTable::slot` resolves it.
+    pub weapon_slot: String,
+    /// The shared cap's index, assigned by `WeaponTable` off
+    /// `shared_ammo_cap_name` the way `ammo_index` is off `ammo_name`.
+    pub shared_cap_index: Option<usize>,
+    /// `reticleCenter` and `reticleSide`, the hip crosshair's centre image and
+    /// the image its four arms share; `None` when blank.
+    pub reticle_center: Option<String>,
+    pub reticle_side: Option<String>,
+    /// Window pixels, not virtual ones (docs/research/cod11-hud-protocol.md,
+    /// section 9).
+    pub reticle_center_size: f32,
+    pub reticle_side_size: f32,
+    /// The least an arm sits off the centre, in virtual pixels.
+    pub reticle_min_ofs: f32,
+    /// Arm sizes each arm is pulled back toward the centre by.
+    pub hip_reticle_side_pos: f32,
+    /// The tail of the sight fraction over which the crosshair shrinks, the
+    /// sight going up and coming down.
+    pub ads_crosshair_in_frac: f32,
+    pub ads_crosshair_out_frac: f32,
+    /// The cursor hint's icon for this weapon, and for its ammo.
+    pub hud_icon: Option<String>,
+    pub ammo_icon: Option<String>,
+    /// Doubles the cursor hint icon's width.
+    pub wide_list_icon: bool,
+    /// Localized key the HUD's weapon name appends after a `/`; blank on most.
+    pub mode_name: String,
+    /// Which `WeaponAnim` keys this file names a non-blank clip for (kar98k's
+    /// `reloadStartAnim` and `reloadEndAnim` are blank, for instance):
+    /// `view_anim` and `resolve` fall back to idle rather than pick a clip
+    /// that was never loaded.
+    pub anim_keys: std::collections::HashSet<WeaponAnim>,
+}
+
+/// Absence is normal (a spread key on a turret file, an ammo key on a
+/// melee-only weapon: whole sections the file's kind does not carry) and
+/// stays silent; garbage warns. Same convention as `parse_bool`.
+fn parse_num<T: std::str::FromStr + std::fmt::Display + Copy>(
+    map: &HashMap<String, String>,
+    key: &str,
+    default: T,
+) -> T {
+    match map.get(key) {
+        Some(v) => v.trim().parse().unwrap_or_else(|_| {
+            log::warn!("weapon: invalid {key} value {v:?}, using default {default}");
+            default
+        }),
+        None => default,
+    }
+}
+
+/// Absence is normal (no `boltAction` on a semi-auto) and stays silent;
+/// garbage warns.
+fn parse_bool(map: &HashMap<String, String>, key: &str, default: bool) -> bool {
+    match map.get(key).map(|v| v.trim()) {
+        Some("0") => false,
+        Some("1") => true,
+        Some(v) => {
+            log::warn!("weapon: invalid {key} value {v:?}, using default {default}");
+            default
+        }
+        None => default,
+    }
+}
+
+/// Every field's own default, which is what `from_map` gives an empty file.
+impl Default for WeaponDef {
+    fn default() -> WeaponDef {
+        WeaponDef::from_map(&HashMap::new())
+    }
+}
+
+/// `name` is the CS 7 name (`kar98k_mp`), without the `weapons/mp/` prefix.
+pub fn load(fs: &Pk3Fs, name: &str) -> Result<WeaponDef> {
+    let path = format!("weapons/mp/{name}");
+    let text = fs
+        .read(&path)
+        .ok_or_else(|| anyhow!("{path} not found in pk3s"))?;
+    let map = crate::xmodel::parse_weapon(&String::from_utf8_lossy(&text));
+    Ok(WeaponDef::from_map(&map))
+}
+
+/// Bit 512 on `ps.weapAnim`: retail flips it on every `set_anim`, including a
+/// repeat of the same clip, so it is not part of the wire index (combat doc,
+/// 1.2).
+const ANIM_TOGGLE_BIT: i32 = 512;
+
+/// Picks the viewmodel clip for the wire's `ps.weapAnim`
+/// (docs/research/cod11-combat.md, 1.2; index table there, constants in
+/// `crates/common/src/pmove/weapon.rs`). Index 0 reads `frac_trend` for the
+/// sight clips and `def` for whether the weapon has an empty idle.
+pub fn view_anim(
+    def: &WeaponDef,
+    weap_anim: i32,
+    ads_frac: f32,
+    frac_trend: i32,
+    clip_empty: bool,
+) -> WeaponAnim {
+    match weap_anim & !ANIM_TOGGLE_BIT {
+        0 => {
+            if ads_frac >= 1.0 || frac_trend > 0 {
+                WeaponAnim::AdsUp
+            } else if frac_trend < 0 {
+                WeaponAnim::AdsDown
+            } else if clip_empty && def.anim_keys.contains(&WeaponAnim::EmptyIdle) {
+                WeaponAnim::EmptyIdle
+            } else {
+                WeaponAnim::Idle
+            }
+        }
+        2 => WeaponAnim::Fire,
+        3 => WeaponAnim::LastShot,
+        4 => WeaponAnim::Rechamber,
+        5 => WeaponAnim::AdsFire,
+        6 => WeaponAnim::AdsLastShot,
+        7 => WeaponAnim::AdsRechamber,
+        8 => WeaponAnim::Melee,
+        9 => WeaponAnim::Drop,
+        10 => WeaponAnim::Raise,
+        11 => WeaponAnim::Reload,
+        12 => WeaponAnim::ReloadEmpty,
+        13 => WeaponAnim::ReloadStart,
+        14 => WeaponAnim::ReloadEnd,
+        15 => WeaponAnim::AltDrop,
+        16 => WeaponAnim::AltRaise,
+        17 => WeaponAnim::HoldFire,
+        _ => WeaponAnim::Idle,
+    }
+}
+
+/// Tracks how long the current `weapAnim` clip has been playing and the
+/// direction `ads_frac` is moving. The clip restarts on any change to the
+/// field: every `set_anim` inverts bit `0x200`, so a repeat of the same clip
+/// changes it too (docs/research/cod11-combat.md, 1.2).
+#[derive(Default)]
+pub struct ViewAnimClock {
+    last_weap_anim: Option<i32>,
+    started_ms: f64,
+    last_frac: f32,
+}
+
+impl ViewAnimClock {
+    /// Returns whether this frame restarted the clip, how many ms into it
+    /// the clip now is, and the `ads_frac` trend since last frame (-1
+    /// falling, 0 unchanged, 1 rising).
+    pub fn update(&mut self, weap_anim: i32, ads_frac: f32, now_ms: f64) -> (bool, f64, i32) {
+        let restarted = self.last_weap_anim != Some(weap_anim);
+        if restarted {
+            self.started_ms = now_ms;
+        }
+        self.last_weap_anim = Some(weap_anim);
+        let trend = if ads_frac > self.last_frac {
+            1
+        } else if ads_frac < self.last_frac {
+            -1
+        } else {
+            0
+        };
+        self.last_frac = ads_frac;
+        (restarted, now_ms - self.started_ms, trend)
+    }
+}
+
+/// A clip that has run past its weapon-file length without the wire resetting
+/// `weapAnim` (a rechamber ending, a released shot:
+/// player-model-anim-system.md, "What `weapAnim` is not written by") falls to
+/// the idle reading for the current frac and clip state, rather than looping
+/// or freezing on its last frame. INFERRED: retail's cgame is not decompiled
+/// here; falling to idle matches a `weapAnim` left at fire after the shot. The
+/// one exception is `HoldFire`, the grenade held at the pin, which holds its
+/// last frame until `weapAnim` changes.
+pub fn resolve(
+    def: &WeaponDef,
+    anim: WeaponAnim,
+    ms_in: f64,
+    clip_len_ms: f64,
+    idle_for_state: WeaponAnim,
+) -> (WeaponAnim, f64) {
+    if !anim.is_idle_kind() && anim != WeaponAnim::HoldFire && ms_in >= clip_len_ms {
+        return (idle_for_state, ms_in - clip_len_ms);
+    }
+    if !def.anim_keys.contains(&anim) {
+        return (idle_for_state, ms_in);
+    }
+    (anim, ms_in)
+}
+
+impl WeaponDef {
+    /// Times default to 0, so a missing time completes its state instantly.
+    pub fn from_map(map: &HashMap<String, String>) -> WeaponDef {
+        WeaponDef {
+            clip_size: parse_num(map, "clipSize", 1).max(1),
+            fire_time: parse_num(map, "fireTime", 0.0),
+            fire_delay: parse_num(map, "fireDelay", 0.0),
+            rechamber_time: parse_num(map, "rechamberTime", 0.0),
+            rechamber_bolt_time: parse_num(map, "rechamberBoltTime", 0.0),
+            reload_time: parse_num(map, "reloadTime", 0.0),
+            reload_empty_time: parse_num(map, "reloadEmptyTime", 0.0),
+            reload_add_time: parse_num(map, "reloadAddTime", 0.0),
+            reload_start_time: parse_num(map, "reloadStartTime", 0.0),
+            reload_start_add_time: parse_num(map, "reloadStartAddTime", 0.0),
+            reload_end_time: parse_num(map, "reloadEndTime", 0.0),
+            segmented_reload: parse_bool(map, "segmentedReload", false),
+            no_partial_reload: parse_bool(map, "noPartialReload", false),
+            raise_time: parse_num(map, "raiseTime", 0.0),
+            aim_down_sight: parse_bool(map, "aimDownSight", false),
+            move_speed_scale: parse_num(map, "moveSpeedScale", 1.0),
+            ads_trans_in: parse_num(map, "adsTransInTime", 0.0),
+            ads_trans_out: parse_num(map, "adsTransOutTime", 0.0),
+            ads_reload_trans_time: parse_num(map, "adsReloadTransTime", 0.0),
+            ads_fire: parse_bool(map, "adsFire", false),
+            ads_zoom_fov: parse_num(map, "adsZoomFov", CG_FOV),
+            ads_zoom_in_frac: parse_num(map, "adsZoomInFrac", 0.0),
+            ads_zoom_out_frac: parse_num(map, "adsZoomOutFrac", 0.0),
+            ads_view_bob_mult: parse_num(map, "adsViewBobMult", 1.0),
+            ads_bob_factor: parse_num(map, "adsBobFactor", 1.0),
+            semi_auto: parse_bool(map, "semiAuto", false),
+            start_ammo: parse_num(map, "startAmmo", 0),
+            bolt_action: parse_bool(map, "boltAction", false),
+            world_model: map
+                .get("worldModel")
+                .map(|v| v.strip_prefix("xmodel/").unwrap_or(v).to_string()),
+            world_flash_effect: map.get("worldFlashEffect").map(|v| v.trim().to_string()),
+            view_flash_effect: map.get("viewFlashEffect").map(|v| v.trim().to_string()),
+            kill_icon: opt_str(map, "killIcon"),
+            wide_kill_icon: parse_bool(map, "wideKillIcon", false),
+            sounds: WeaponSounds::from_map(map),
+            aim: AimDef::from_map(map),
+            damage: parse_num(map, "damage", 0),
+            melee_damage: parse_num(map, "meleeDamage", 0),
+            melee_delay: parse_num(map, "meleeDelay", 0.0),
+            melee_time: parse_num(map, "meleeTime", 0.0),
+            fuse_time: parse_num(map, "fuseTime", 0.0),
+            hold_fire_time: parse_num(map, "holdFireTime", 0.0),
+            explosion_radius: parse_num(map, "explosionRadius", 0.0),
+            explosion_inner_damage: parse_num(map, "explosionInnerDamage", 0),
+            explosion_outer_damage: parse_num(map, "explosionOuterDamage", 0),
+            projectile_speed: parse_num(map, "projectileSpeed", 0.0),
+            projectile_speed_up: parse_num(map, "projectileSpeedUp", 0.0),
+            projectile_model: opt_str(map, "projectileModel")
+                .map(|m| m.strip_prefix("xmodel/").unwrap_or(&m).to_string()),
+            proj_impact_explode: parse_bool(map, "projImpactExplode", false),
+            max_ammo: parse_num(map, "maxAmmo", 0),
+            clip_only: parse_bool(map, "clipOnly", false),
+            reload_ammo_add: parse_num(map, "reloadAmmoAdd", 0),
+            reload_start_add: parse_num(map, "reloadStartAdd", 0),
+            drop_time: parse_num(map, "dropTime", 0.0),
+            ammo_name: map.get("ammoName").cloned().unwrap_or_default(),
+            clip_name: map.get("clipName").cloned().unwrap_or_default(),
+            weapon_class: map
+                .get("weaponClass")
+                .map(|c| c.to_ascii_lowercase())
+                .unwrap_or_default(),
+            weapon_type: map
+                .get("weaponType")
+                .map(|c| c.to_ascii_lowercase())
+                .unwrap_or_default(),
+            hip_spread_stand_min: parse_num(map, "hipSpreadStandMin", 0.0),
+            hip_spread_ducked_min: parse_num(map, "hipSpreadDuckedMin", 0.0),
+            hip_spread_prone_min: parse_num(map, "hipSpreadProneMin", 0.0),
+            hip_spread_max: parse_num(map, "hipSpreadMax", 0.0),
+            hip_spread_fire_add: parse_num(map, "hipSpreadFireAdd", 0.0),
+            hip_spread_decay_rate: parse_num(map, "hipSpreadDecayRate", 0.0),
+            hip_spread_turn_add: parse_num(map, "hipSpreadTurnAdd", 0.0),
+            hip_spread_move_add: parse_num(map, "hipSpreadMoveAdd", 0.0),
+            hip_spread_ducked_decay: parse_num(map, "hipSpreadDuckedDecay", 0.0),
+            hip_spread_prone_decay: parse_num(map, "hipSpreadProneDecay", 0.0),
+            ads_spread: parse_num(map, "adsSpread", 0.0),
+            ammo_index: 0,
+            clip_index: 0,
+            display_name: map.get("displayName").cloned().unwrap_or_default(),
+            drop_ammo_min: parse_num(map, "dropAmmoMin", 0),
+            drop_ammo_max: parse_num(map, "dropAmmoMax", 0),
+            shared_ammo_cap: parse_num(map, "sharedAmmoCap", 0),
+            shared_ammo_cap_name: map.get("sharedAmmoCapName").cloned().unwrap_or_default(),
+            weapon_slot: map
+                .get("weaponSlot")
+                .map(|s| s.to_ascii_lowercase())
+                .unwrap_or_default(),
+            shared_cap_index: None,
+            reticle_center: opt_str(map, "reticleCenter"),
+            reticle_side: opt_str(map, "reticleSide"),
+            reticle_center_size: parse_num(map, "reticleCenterSize", 0.0),
+            reticle_side_size: parse_num(map, "reticleSideSize", 0.0),
+            reticle_min_ofs: parse_num(map, "reticleMinOfs", 0.0),
+            hip_reticle_side_pos: parse_num(map, "hipReticleSidePos", 0.0),
+            ads_crosshair_in_frac: parse_num(map, "adsCrosshairInFrac", 0.0),
+            ads_crosshair_out_frac: parse_num(map, "adsCrosshairOutFrac", 0.0),
+            hud_icon: opt_str(map, "hudIcon"),
+            ammo_icon: opt_str(map, "ammoIcon"),
+            wide_list_icon: parse_bool(map, "wideListIcon", false),
+            mode_name: map.get("modeName").cloned().unwrap_or_default(),
+            anim_keys: WeaponAnim::ALL
+                .into_iter()
+                .filter(|a| opt_str(map, a.key()).is_some())
+                .collect(),
+        }
+    }
+}
+
+/// Debounced by the caller.
+#[derive(Default, Copy, Clone)]
+pub struct WeaponInput {
+    pub fire: bool,      // LMB edge this frame
+    pub fire_held: bool, // LMB down; only full-auto (`semiAuto 0`) acts on it
+    pub ads: bool,       // RMB held
+    pub reload: bool,    // R edge this frame
+}
+
+pub struct WeaponOut {
+    pub anim: WeaponAnim,
+    pub anim_time: f32, // seconds into the clip
+    pub looping: bool,  // only Idle
+    pub ads_frac: f32,  // 0..1
+    pub fired: bool,
+    /// Sound cue the client plays this frame; consumed once.
+    pub cue: Option<WeaponCue>,
+}
+
+/// The state transitions that carry a weapon-file sound
+/// (docs/research/cod11-sound-system.md, section 8).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum WeaponCue {
+    Fire,
+    LastShot,
+    Rechamber,
+    Reload,
+    ReloadFromEmpty,
+    Raise,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum State {
+    Raising,
+    Idle,
+    AdsUp,
+    AdsIdle,
+    AdsDown,
+    Firing,
+    Rechambering,
+    Reloading,
+}
+
+pub struct WeaponState {
+    state: State,
+    t: f32,
+    ammo: u32,
+    ads_frac: f32,
+    def: WeaponDef,
+    /// Hip or Ads* clips for the Firing/Rechambering pair, fixed at the fire edge.
+    ads_variant: bool,
+    fire_anim: WeaponAnim,
+    /// Set by the transitions that make a sound; `output` hands it out once.
+    pending_cue: Option<WeaponCue>,
+}
+
+impl WeaponState {
+    pub fn new(def: WeaponDef) -> WeaponState {
+        WeaponState {
+            state: State::Raising,
+            t: 0.0,
+            ammo: def.clip_size,
+            ads_frac: 0.0,
+            def,
+            ads_variant: false,
+            fire_anim: WeaponAnim::Fire,
+            pending_cue: Some(WeaponCue::Raise),
+        }
+    }
+
+    /// Rounds left in the clip, for HUD readouts.
+    pub fn ammo(&self) -> u32 {
+        self.ammo
+    }
+
+    pub fn update(&mut self, dt: f32, input: WeaponInput) -> WeaponOut {
+        let mut fired = false;
+
+        match self.state {
+            // No input buffering; RMB still integrates below.
+            State::Raising | State::Firing | State::Rechambering | State::Reloading => {}
+            State::Idle | State::AdsIdle | State::AdsUp | State::AdsDown => {
+                let trigger = input.fire || (!self.def.semi_auto && input.fire_held);
+                if trigger && self.ammo > 0 {
+                    self.enter_firing();
+                    fired = true;
+                } else if input.reload && self.ammo < self.def.clip_size {
+                    self.pending_cue = Some(if self.ammo == 0 {
+                        WeaponCue::ReloadFromEmpty
+                    } else {
+                        WeaponCue::Reload
+                    });
+                    self.enter(State::Reloading, 0.0);
+                } else {
+                    self.handle_ads_toggle(input.ads);
+                }
+            }
+        }
+
+        self.t += dt;
+        self.integrate_ads_frac(dt, input.ads);
+
+        if self.t >= self.duration() {
+            self.complete(input.ads, input.fire_held, &mut fired);
+        }
+
+        self.output(fired)
+    }
+
+    fn enter(&mut self, state: State, t: f32) {
+        self.state = state;
+        self.t = t;
+    }
+
+    fn enter_firing(&mut self) {
+        self.ammo -= 1;
+        let last_shot = self.ammo == 0;
+        self.pending_cue = Some(if last_shot {
+            WeaponCue::LastShot
+        } else {
+            WeaponCue::Fire
+        });
+        self.ads_variant = self.ads_frac >= 0.5;
+        self.fire_anim = match (self.ads_variant, last_shot) {
+            (false, false) => WeaponAnim::Fire,
+            (false, true) => WeaponAnim::LastShot,
+            (true, false) => WeaponAnim::AdsFire,
+            (true, true) => WeaponAnim::AdsLastShot,
+        };
+        self.enter(State::Firing, 0.0);
+    }
+
+    fn handle_ads_toggle(&mut self, ads: bool) {
+        let switching = matches!(
+            (self.state, ads),
+            (State::Idle, true)
+                | (State::AdsIdle, false)
+                | (State::AdsUp, false)
+                | (State::AdsDown, true)
+        );
+        if switching {
+            self.goto_ads(ads);
+        }
+    }
+
+    /// Mirrors `t` from `ads_frac` so a half-raised ADS never snaps. At the
+    /// extremes goes straight to the settled state, so a transition never
+    /// starts past its own duration.
+    fn goto_ads(&mut self, ads: bool) {
+        if ads {
+            if self.ads_frac >= 1.0 {
+                self.enter(State::AdsIdle, 0.0);
+            } else {
+                let t = self.ads_frac * self.def.ads_trans_in;
+                self.enter(State::AdsUp, t);
+            }
+        } else if self.ads_frac <= 0.0 {
+            self.enter(State::Idle, 0.0);
+        } else {
+            let t = (1.0 - self.ads_frac) * self.def.ads_trans_out;
+            self.enter(State::AdsDown, t);
+        }
+    }
+
+    fn integrate_ads_frac(&mut self, dt: f32, ads: bool) {
+        let forced_down = matches!(self.state, State::Raising | State::Reloading);
+        let target_up = ads && !forced_down;
+        let dur = if target_up {
+            self.def.ads_trans_in
+        } else {
+            self.def.ads_trans_out
+        };
+        let next = if dur <= 0.0 {
+            if target_up {
+                1.0
+            } else {
+                0.0
+            }
+        } else if target_up {
+            self.ads_frac + dt / dur
+        } else {
+            self.ads_frac - dt / dur
+        };
+        self.ads_frac = next.clamp(0.0, 1.0);
+    }
+
+    fn duration(&self) -> f32 {
+        match self.state {
+            State::Raising => self.def.raise_time,
+            State::AdsUp => self.def.ads_trans_in,
+            State::AdsDown => self.def.ads_trans_out,
+            State::Firing => self.def.fire_time,
+            State::Rechambering => self.def.rechamber_time,
+            State::Reloading => self.def.reload_time,
+            State::Idle | State::AdsIdle => f32::INFINITY,
+        }
+    }
+
+    fn complete(&mut self, ads: bool, fire_held: bool, fired: &mut bool) {
+        match self.state {
+            State::Raising => {
+                if !self.def.semi_auto && fire_held && self.ammo > 0 {
+                    self.enter_firing();
+                    *fired = true;
+                } else {
+                    self.enter(State::Idle, 0.0);
+                }
+            }
+            State::AdsUp => self.enter(State::AdsIdle, 0.0),
+            State::AdsDown => self.enter(State::Idle, 0.0),
+            State::Firing => {
+                if self.def.bolt_action && self.ammo > 0 {
+                    self.pending_cue = Some(WeaponCue::Rechamber);
+                    self.enter(State::Rechambering, 0.0);
+                } else if !self.def.semi_auto && fire_held && self.ammo > 0 {
+                    self.enter_firing();
+                    *fired = true;
+                } else {
+                    self.goto_ads(ads);
+                }
+            }
+            State::Rechambering => self.goto_ads(ads),
+            State::Reloading => {
+                self.ammo = self.def.clip_size;
+                self.goto_ads(ads);
+            }
+            State::Idle | State::AdsIdle => {}
+        }
+    }
+
+    fn output(&mut self, fired: bool) -> WeaponOut {
+        let rechamber_anim = if self.ads_variant {
+            WeaponAnim::AdsRechamber
+        } else {
+            WeaponAnim::Rechamber
+        };
+        let (anim, anim_time, looping) = match self.state {
+            State::Raising => (WeaponAnim::Raise, self.t, false),
+            State::Idle => (WeaponAnim::Idle, self.t, true),
+            State::AdsUp => (WeaponAnim::AdsUp, self.t, false),
+            // Holds the last frame of the up-transition.
+            State::AdsIdle => (WeaponAnim::AdsUp, self.def.ads_trans_in, false),
+            State::AdsDown => (WeaponAnim::AdsDown, self.t, false),
+            State::Firing => (self.fire_anim, self.t, false),
+            State::Rechambering => (rechamber_anim, self.t, false),
+            State::Reloading => (WeaponAnim::Reload, self.t, false),
+        };
+        WeaponOut {
+            anim,
+            anim_time,
+            looping,
+            ads_frac: self.ads_frac,
+            fired,
+            cue: self.pending_cue.take(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::xmodel;
+
+    #[test]
+    fn sound_keys_blank_means_absent() {
+        let mut map = HashMap::new();
+        map.insert("fireSound".to_string(), "weap_kar98k_fire".to_string());
+        map.insert("lastShotSound".to_string(), "".to_string());
+        map.insert(
+            "reloadSound".to_string(),
+            " weap_kar98k_reload ".to_string(),
+        );
+        map.insert("rifleBullet".to_string(), "1".to_string());
+        let s = WeaponSounds::from_map(&map);
+        assert_eq!(s.fire.as_deref(), Some("weap_kar98k_fire"));
+        assert_eq!(s.last_shot, None);
+        assert_eq!(s.reload.as_deref(), Some("weap_kar98k_reload"));
+        assert_eq!(s.proj_explosion, None);
+        assert!(s.rifle_bullet && !s.clip_only);
+        assert_eq!(WeaponDef::from_map(&map).sounds, s);
+    }
+
+    #[test]
+    fn retail_thompson_sounds() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let def = load(&fs, "thompson_mp").unwrap();
+        assert_eq!(def.sounds.fire.as_deref(), Some("weap_thompson_fire"));
+        assert_eq!(
+            def.sounds.reload_empty.as_deref(),
+            Some("weap_thompson_reload")
+        );
+        assert_eq!(
+            def.sounds.alt_switch.as_deref(),
+            Some("weap_thompson_altswitch")
+        );
+    }
+
+    /// The fields the item pickup reads, off the shipped files
+    /// (docs/research/cod11-items.md, the weapon file table).
+    #[test]
+    fn the_pickup_fields_parse_off_the_stock_files() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let fg42 = load(&fs, "fg42_mp").unwrap();
+        assert_eq!(fg42.display_name, "WEAPON_FG42");
+        assert_eq!((fg42.drop_ammo_min, fg42.drop_ammo_max), (100, 200));
+        assert_eq!(fg42.weapon_slot, "primary");
+        assert_eq!(fg42.shared_ammo_cap_name, "");
+        let frag = load(&fs, "fraggrenade_mp").unwrap();
+        assert_eq!(frag.shared_ammo_cap, 3);
+        assert_eq!(frag.shared_ammo_cap_name, "grenades");
+        assert_eq!(frag.weapon_slot, "grenade");
+        let pf = load(&fs, "panzerfaust_mp").unwrap();
+        assert_eq!((pf.drop_ammo_min, pf.drop_ammo_max), (0, 0));
+        assert!(pf.clip_only);
+    }
+
+    /// The keys the native HUD reads, off the shipped files.
+    #[test]
+    fn the_hud_fields_parse_off_the_stock_files() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let carbine = load(&fs, "m1carbine_mp").unwrap();
+        assert_eq!(carbine.reticle_center, None);
+        assert_eq!(
+            carbine.reticle_side.as_deref(),
+            Some("gfx/reticle/side_skinny.tga")
+        );
+        assert_eq!(
+            (carbine.reticle_center_size, carbine.reticle_side_size),
+            (4.0, 8.0)
+        );
+        assert_eq!(carbine.reticle_min_ofs, 0.0);
+        assert_eq!(
+            (
+                carbine.ads_crosshair_in_frac,
+                carbine.ads_crosshair_out_frac
+            ),
+            (1.0, 0.2)
+        );
+        assert_eq!(
+            carbine.hud_icon.as_deref(),
+            Some("gfx/icons/hud@m1carbine.tga")
+        );
+        assert_eq!(
+            carbine.ammo_icon.as_deref(),
+            Some("gfx/icons/hud@ammo2.tga")
+        );
+        assert!(carbine.wide_list_icon);
+        assert_eq!(carbine.mode_name, "");
+        let frag = load(&fs, "fraggrenade_mp").unwrap();
+        assert_eq!(
+            frag.reticle_center.as_deref(),
+            Some("gfx/reticle/center_cross.tga")
+        );
+        assert_eq!(frag.reticle_side, None);
+        assert_eq!(
+            (frag.reticle_center_size, frag.reticle_min_ofs),
+            (32.0, 4.0)
+        );
+        let thompson = load(&fs, "thompson_mp").unwrap();
+        assert_eq!(thompson.mode_name, "WEAPON_FULLAUTO");
+    }
+
+    #[test]
+    fn retail_files_parse_semi_auto_start_ammo_and_ads_bob() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let kar = load(&fs, "kar98k_mp").unwrap();
+        assert!(kar.semi_auto);
+        assert_eq!(kar.start_ammo, 60);
+        assert!((kar.ads_bob_factor - 1.0).abs() < 1e-6);
+        let thompson = load(&fs, "thompson_mp").unwrap();
+        assert!(!thompson.semi_auto, "thompson is full-auto");
+        assert_eq!(thompson.start_ammo, 270);
+        assert_eq!(thompson.ads_bob_factor, 0.0);
+        // The frag is one of the eight stock files that omit `semiAuto`, and
+        // the parse default is what decides those.
+        let frag = load(&fs, "fraggrenade_mp").unwrap();
+        assert!(!frag.semi_auto, "the frag omits semiAuto");
+    }
+
+    #[test]
+    fn the_carbine_file_carries_its_damage_and_ammo() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let w = load(&fs, "m1carbine_mp").unwrap();
+        assert_eq!(w.damage, 45);
+        assert_eq!(w.melee_damage, 50);
+        assert_eq!(w.max_ammo, 400);
+        assert_eq!(w.start_ammo, 300);
+        assert_eq!(w.clip_size, 15);
+        assert_eq!(w.weapon_class, "rifle");
+        assert!((w.hip_spread_stand_min - 1.5).abs() < 1e-6);
+        assert!((w.ads_spread - 0.4).abs() < 1e-6);
+        assert!(w.drop_time > 0.0);
+        assert!(!w.ammo_name.is_empty());
+    }
+
+    fn def() -> WeaponDef {
+        WeaponDef {
+            clip_size: 5,
+            fire_time: 0.33,
+            rechamber_time: 1.0,
+            reload_time: 2.5,
+            raise_time: 0.5,
+            ads_trans_in: 0.3,
+            ads_trans_out: 0.4,
+            ads_zoom_fov: 50.0,
+            ads_view_bob_mult: 0.2,
+            start_ammo: 60,
+            bolt_action: true,
+            // The kar98k's shape: it spells `semiAuto 1`, where the parse
+            // default is off for the eight files that omit the key.
+            semi_auto: true,
+            ..WeaponDef::default()
+        }
+    }
+
+    fn step(w: &mut WeaponState, secs: f32, input: WeaponInput) -> WeaponOut {
+        let n = ((secs / (1.0 / 60.0)).ceil() as usize).max(1);
+        let mut out = None;
+        for _ in 0..n {
+            out = Some(w.update(1.0 / 60.0, input));
+        }
+        out.unwrap()
+    }
+
+    /// The bolt-action drain: Raise, then Fire/Rechamber per shot, the
+    /// emptying shot as LastShot with no rechamber after it.
+    #[test]
+    fn cues_follow_the_transitions() {
+        let mut w = WeaponState::new(def());
+        let fire = WeaponInput {
+            fire: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            w.update(0.0, WeaponInput::default()).cue,
+            Some(WeaponCue::Raise)
+        );
+        // consumed once
+        assert_eq!(w.update(1.0 / 60.0, WeaponInput::default()).cue, None);
+        step(&mut w, 0.6, WeaponInput::default());
+
+        for _ in 0..4 {
+            let out = w.update(1.0 / 60.0, fire);
+            assert_eq!(out.cue, Some(WeaponCue::Fire));
+            // fire_time 0.33 + rechamber 1.0: the rechamber cue fires on the
+            // completion frame
+            let cues: Vec<_> = (0..84)
+                .filter_map(|_| w.update(1.0 / 60.0, WeaponInput::default()).cue)
+                .collect();
+            assert_eq!(cues, vec![WeaponCue::Rechamber]);
+            step(&mut w, 0.05, WeaponInput::default());
+        }
+
+        let out = w.update(1.0 / 60.0, fire);
+        assert_eq!(out.cue, Some(WeaponCue::LastShot));
+        let cues: Vec<_> = (0..84)
+            .filter_map(|_| w.update(1.0 / 60.0, WeaponInput::default()).cue)
+            .collect();
+        assert!(cues.is_empty(), "empty clip must not rechamber: {cues:?}");
+
+        let reload = WeaponInput {
+            reload: true,
+            ..Default::default()
+        };
+        let out = w.update(1.0 / 60.0, reload);
+        assert_eq!(out.cue, Some(WeaponCue::ReloadFromEmpty));
+    }
+
+    fn auto_def() -> WeaponDef {
+        WeaponDef {
+            semi_auto: false,
+            bolt_action: false,
+            fire_time: 0.12,
+            ..def()
+        }
+    }
+
+    #[test]
+    fn auto_weapon_refires_while_held_at_fire_cadence() {
+        let mut w = WeaponState::new(auto_def());
+        step(&mut w, 0.6, WeaponInput::default());
+        let press = WeaponInput {
+            fire: true,
+            fire_held: true,
+            ..Default::default()
+        };
+        assert!(w.update(1.0 / 60.0, press).fired);
+        let held = WeaponInput {
+            fire_held: true,
+            ..Default::default()
+        };
+        // 0.3 s at fire_time 0.12: exactly two more shots, no new edge needed
+        let mut shots = 0;
+        for _ in 0..18 {
+            shots += w.update(1.0 / 60.0, held).fired as usize;
+        }
+        assert_eq!(shots, 2, "one shot per fireTime while held");
+    }
+
+    #[test]
+    fn semi_weapon_needs_a_new_edge_per_shot() {
+        let mut d = def();
+        d.bolt_action = false;
+        let mut w = WeaponState::new(d);
+        step(&mut w, 0.6, WeaponInput::default());
+        let press = WeaponInput {
+            fire: true,
+            fire_held: true,
+            ..Default::default()
+        };
+        assert!(w.update(1.0 / 60.0, press).fired);
+        let held = WeaponInput {
+            fire_held: true,
+            ..Default::default()
+        };
+        let mut shots = 0;
+        for _ in 0..60 {
+            shots += w.update(1.0 / 60.0, held).fired as usize;
+        }
+        assert_eq!(shots, 0, "holding a semi-auto trigger must not refire");
+    }
+
+    #[test]
+    fn auto_starts_firing_when_the_button_is_already_down_after_raise() {
+        let mut w = WeaponState::new(auto_def());
+        let held = WeaponInput {
+            fire_held: true,
+            ..Default::default()
+        };
+        assert!(!w.update(1.0 / 60.0, held).fired, "still raising");
+        let mut shots = 0;
+        for _ in 0..40 {
+            shots += w.update(1.0 / 60.0, held).fired as usize;
+        }
+        assert_eq!(shots, 2, "fires on raise settle, then once more by 0.66 s");
+    }
+
+    #[test]
+    fn ammo_getter_reads_the_clip() {
+        let mut w = WeaponState::new(auto_def());
+        assert_eq!(w.ammo(), 5);
+        step(&mut w, 0.6, WeaponInput::default());
+        assert!(
+            w.update(
+                1.0 / 60.0,
+                WeaponInput {
+                    fire: true,
+                    ..Default::default()
+                }
+            )
+            .fired
+        );
+        assert_eq!(w.ammo(), 4);
+    }
+
+    #[test]
+    fn raises_then_idles() {
+        let mut w = WeaponState::new(def());
+        assert_eq!(
+            w.update(0.0, WeaponInput::default()).anim,
+            WeaponAnim::Raise
+        );
+        let out = step(
+            &mut w,
+            0.1,
+            WeaponInput {
+                fire: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(out.anim, WeaponAnim::Raise);
+        assert!(!out.fired);
+        let out = step(&mut w, 0.5, WeaponInput::default());
+        assert_eq!(out.anim, WeaponAnim::Idle);
+        assert!(out.looping);
+    }
+
+    #[test]
+    fn fire_rechamber_cycle() {
+        let mut w = WeaponState::new(def());
+        step(&mut w, 0.6, WeaponInput::default());
+        let out = w.update(
+            1.0 / 60.0,
+            WeaponInput {
+                fire: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(out.anim, WeaponAnim::Fire);
+        assert!(out.fired);
+        assert!(!w.update(1.0 / 60.0, WeaponInput::default()).fired);
+        let out = step(
+            &mut w,
+            0.4,
+            WeaponInput {
+                fire: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(out.anim, WeaponAnim::Rechamber);
+        assert!(!out.fired);
+        let out = step(&mut w, 1.1, WeaponInput::default());
+        assert_eq!(out.anim, WeaponAnim::Idle);
+    }
+
+    #[test]
+    fn fifth_shot_is_lastshot_and_trigger_goes_dead() {
+        let mut w = WeaponState::new(def());
+        step(&mut w, 0.6, WeaponInput::default());
+        for _ in 0..4 {
+            assert!(
+                w.update(
+                    1.0 / 60.0,
+                    WeaponInput {
+                        fire: true,
+                        ..Default::default()
+                    }
+                )
+                .fired
+            );
+            step(&mut w, 1.5, WeaponInput::default()); // fire + rechamber
+        }
+        let out = w.update(
+            1.0 / 60.0,
+            WeaponInput {
+                fire: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(out.anim, WeaponAnim::LastShot);
+        // empty clip: no rechamber
+        let out = step(&mut w, 0.4, WeaponInput::default());
+        assert_eq!(out.anim, WeaponAnim::Idle);
+        let out = w.update(
+            1.0 / 60.0,
+            WeaponInput {
+                fire: true,
+                ..Default::default()
+            },
+        );
+        assert!(!out.fired);
+        assert_eq!(out.anim, WeaponAnim::Idle);
+    }
+
+    #[test]
+    fn reload_refills_and_restores_ads() {
+        let mut w = WeaponState::new(def());
+        step(&mut w, 0.6, WeaponInput::default());
+        w.update(
+            1.0 / 60.0,
+            WeaponInput {
+                fire: true,
+                ..Default::default()
+            },
+        );
+        step(&mut w, 1.5, WeaponInput::default());
+        let ads_held = WeaponInput {
+            ads: true,
+            ..Default::default()
+        };
+        step(&mut w, 0.5, ads_held); // fully aimed
+        let out = w.update(
+            1.0 / 60.0,
+            WeaponInput {
+                reload: true,
+                ads: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(out.anim, WeaponAnim::Reload);
+        let out = step(&mut w, 1.0, ads_held);
+        assert!(out.ads_frac < 0.05, "{}", out.ads_frac);
+        assert!(
+            !w.update(
+                1.0 / 60.0,
+                WeaponInput {
+                    fire: true,
+                    ads: true,
+                    ..Default::default()
+                }
+            )
+            .fired
+        );
+        let out = step(&mut w, 1.8, ads_held);
+        assert_eq!(out.anim, WeaponAnim::AdsUp);
+        let out = step(&mut w, 0.4, ads_held);
+        assert!(out.ads_frac > 0.95);
+        assert!(
+            w.update(
+                1.0 / 60.0,
+                WeaponInput {
+                    fire: true,
+                    ads: true,
+                    ..Default::default()
+                }
+            )
+            .fired
+        );
+    }
+
+    #[test]
+    fn ads_tap_mirrors_fraction() {
+        let mut w = WeaponState::new(def());
+        step(&mut w, 0.6, WeaponInput::default());
+        let ads = WeaponInput {
+            ads: true,
+            ..Default::default()
+        };
+        // half of ads_trans_in
+        let half = step(&mut w, 0.15, ads);
+        assert_eq!(half.anim, WeaponAnim::AdsUp);
+        assert!(
+            half.ads_frac > 0.3 && half.ads_frac < 0.7,
+            "{}",
+            half.ads_frac
+        );
+        let down = w.update(1.0 / 60.0, WeaponInput::default());
+        assert_eq!(down.anim, WeaponAnim::AdsDown);
+        assert!(down.anim_time > 0.1, "{}", down.anim_time);
+        let out = step(&mut w, 0.5, WeaponInput::default());
+        assert_eq!(out.anim, WeaponAnim::Idle);
+        assert!(out.ads_frac < 0.05);
+    }
+
+    #[test]
+    fn ads_fire_uses_ads_clips_and_holds_zoom() {
+        let mut w = WeaponState::new(def());
+        step(&mut w, 0.6, WeaponInput::default());
+        let ads = WeaponInput {
+            ads: true,
+            ..Default::default()
+        };
+        step(&mut w, 0.5, ads);
+        let out = w.update(
+            1.0 / 60.0,
+            WeaponInput {
+                fire: true,
+                ads: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(out.anim, WeaponAnim::AdsFire);
+        assert!(out.fired);
+        let out = step(&mut w, 0.7, ads);
+        assert_eq!(out.anim, WeaponAnim::AdsRechamber);
+        assert!(out.ads_frac > 0.95, "{}", out.ads_frac);
+    }
+
+    #[test]
+    fn def_from_map_parses_and_defaults() {
+        let map = xmodel::parse_weapon(
+            r"\clipSize\5\fireTime\0.33\rechamberTime\1\reloadTime\2.5\raiseTime\0.5\adsTransInTime\0.3\adsTransOutTime\0.4\adsZoomFov\50\adsViewBobMult\0.2\boltAction\1",
+        );
+        let d = WeaponDef::from_map(&map);
+        assert_eq!(d.clip_size, 5);
+        assert!((d.fire_time - 0.33).abs() < 1e-6);
+        assert!(d.bolt_action);
+        let d = WeaponDef::from_map(&HashMap::new());
+        assert_eq!(d.clip_size, 1);
+        assert_eq!(d.fire_time, 0.0);
+        assert!(!d.bolt_action);
+        assert_eq!(d.world_model, None);
+        assert_eq!(d.world_flash_effect, None);
+        assert_eq!(d.kill_icon, None);
+        assert!(!d.wide_kill_icon);
+    }
+
+    #[test]
+    fn the_frag_keys_parse() {
+        let map: HashMap<String, String> = [
+            ("weaponType", "grenade"),
+            ("fuseTime", "4"),
+            ("holdFireTime", "0.6"),
+            ("meleeDelay", "0.1"),
+            ("meleeTime", "0.66"),
+            ("explosionRadius", "350"),
+            ("explosionInnerDamage", "120"),
+            ("explosionOuterDamage", "5"),
+            ("projectileSpeed", "960"),
+            ("projectileSpeedUp", "120"),
+            ("projectileModel", "xmodel/projectile_USGrenade"),
+            ("projImpactExplode", "0"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let d = WeaponDef::from_map(&map);
+        assert_eq!(d.fuse_time, 4.0);
+        assert_eq!(d.hold_fire_time, 0.6);
+        assert_eq!(d.melee_delay, 0.1);
+        assert_eq!(d.melee_time, 0.66);
+        assert_eq!(d.explosion_radius, 350.0);
+        assert_eq!(
+            (d.explosion_inner_damage, d.explosion_outer_damage),
+            (120, 5)
+        );
+        assert_eq!((d.projectile_speed, d.projectile_speed_up), (960.0, 120.0));
+        assert_eq!(d.projectile_model.as_deref(), Some("projectile_USGrenade"));
+        assert!(!d.proj_impact_explode);
+    }
+
+    #[test]
+    fn world_model_strips_xmodel_prefix() {
+        let map = xmodel::parse_weapon(r"\worldModel\xmodel/weapon_kar98");
+        let d = WeaponDef::from_map(&map);
+        assert_eq!(d.world_model.as_deref(), Some("weapon_kar98"));
+    }
+
+    #[test]
+    fn kill_icon_parses_as_is_and_empty_is_none() {
+        let map = xmodel::parse_weapon(r"\killIcon\gfx/hud/hud@death_kar98.tga");
+        let d = WeaponDef::from_map(&map);
+        assert_eq!(d.kill_icon.as_deref(), Some("gfx/hud/hud@death_kar98.tga"));
+        let map = xmodel::parse_weapon(r"\killIcon\");
+        let d = WeaponDef::from_map(&map);
+        assert_eq!(d.kill_icon, None);
+    }
+
+    #[test]
+    fn wide_kill_icon_parses_as_a_weapon_file_bool() {
+        let map = xmodel::parse_weapon(r"\killIcon\gfx/hud/hud@death_thompson.tga\wideKillIcon\1");
+        let d = WeaponDef::from_map(&map);
+        assert!(d.wide_kill_icon);
+        let map = xmodel::parse_weapon(r"\killIcon\gfx/hud/hud@death_colt45.tga\wideKillIcon\0");
+        let d = WeaponDef::from_map(&map);
+        assert!(!d.wide_kill_icon);
+        assert!(!WeaponDef::from_map(&HashMap::new()).wide_kill_icon);
+    }
+
+    #[test]
+    fn real_weapon_files_carry_wide_kill_icon_flags() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let thompson = load(&fs, "thompson_mp").unwrap();
+        assert!(thompson.wide_kill_icon);
+        let colt = load(&fs, "colt_mp");
+        if let Ok(colt) = colt {
+            assert!(!colt.wide_kill_icon);
+        }
+    }
+
+    #[test]
+    fn world_flash_effect_parses_as_is_no_prefix_to_strip() {
+        let map =
+            xmodel::parse_weapon(r"\worldFlashEffect\fx/muzzleflashes/standardflashworld.efx");
+        let d = WeaponDef::from_map(&map);
+        assert_eq!(
+            d.world_flash_effect.as_deref(),
+            Some("fx/muzzleflashes/standardflashworld.efx")
+        );
+    }
+
+    #[test]
+    fn load_reads_weapon_file_by_cs7_name() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let d = load(&fs, "kar98k_mp").unwrap();
+        let name = d.world_model.expect("kar98k_mp ships a worldModel");
+        assert!(name.to_lowercase().contains("kar98"), "{name}");
+        assert!(load(&fs, "not_a_real_weapon").is_err());
+    }
+
+    #[test]
+    fn load_real_weapon_flash_effects_differ_by_weapon() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let kar98 = load(&fs, "kar98k_mp").unwrap();
+        assert_eq!(
+            kar98.world_flash_effect.as_deref(),
+            Some("fx/muzzleflashes/standardflashworld.efx")
+        );
+        let thompson = load(&fs, "thompson_mp").unwrap();
+        assert_eq!(
+            thompson.world_flash_effect.as_deref(),
+            Some("fx/muzzleflashes/thompson.efx")
+        );
+        let carbine = load(&fs, "m1carbine_mp").unwrap();
+        assert_eq!(
+            carbine.view_flash_effect.as_deref(),
+            Some("fx/muzzleflashes/standardflashviewmp.efx")
+        );
+    }
+
+    #[test]
+    fn loads_real_kar98k_world_model() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let text = fs.read("weapons/mp/kar98k_mp").unwrap();
+        let map = xmodel::parse_weapon(&String::from_utf8_lossy(&text));
+        let d = WeaponDef::from_map(&map);
+        let name = d.world_model.expect("kar98k_mp ships a worldModel");
+        assert!(name.to_lowercase().contains("kar98"), "{name}");
+    }
+
+    /// A def with every `WeaponAnim` key filled in, for `view_anim`/`resolve`
+    /// tests that don't care about a specific weapon file.
+    fn full_def() -> WeaponDef {
+        let mut map = HashMap::new();
+        for which in WeaponAnim::ALL {
+            map.insert(which.key().to_string(), "some_anim".to_string());
+        }
+        WeaponDef::from_map(&map)
+    }
+
+    #[test]
+    fn toggle_edge_restarts() {
+        let mut clock = ViewAnimClock::default();
+        let (restarted, ms, _) = clock.update(514, 0.0, 0.0);
+        assert!(restarted, "the first frame always starts a clip");
+        assert_eq!(ms, 0.0);
+
+        let (restarted, ms, _) = clock.update(2, 0.0, 100.0);
+        assert!(restarted, "514 -> 2 is a different index");
+        assert_eq!(ms, 0.0);
+
+        let (restarted, ms, _) = clock.update(514, 0.0, 150.0);
+        assert!(restarted, "2 -> 514 restarts even back at the same index");
+        assert_eq!(ms, 0.0);
+
+        let (restarted, ms, _) = clock.update(514, 0.0, 175.0);
+        assert!(!restarted, "514 -> 514 holds the clip running");
+        assert_eq!(ms, 25.0);
+    }
+
+    #[test]
+    fn frac_trend() {
+        let mut clock = ViewAnimClock::default();
+        clock.update(0, 0.2, 0.0);
+        let (_, _, trend) = clock.update(0, 0.5, 16.0);
+        assert_eq!(trend, 1, "0.2 -> 0.5 is rising");
+        let (_, _, trend) = clock.update(0, 0.3, 32.0);
+        assert_eq!(trend, -1, "0.5 -> 0.3 is falling");
+        let (_, _, trend) = clock.update(0, 0.3, 48.0);
+        assert_eq!(trend, 0, "0.3 -> 0.3 is unchanged");
+    }
+
+    #[test]
+    fn index_maps_per_table() {
+        let def = full_def();
+        let cases = [
+            (2, WeaponAnim::Fire),
+            (3, WeaponAnim::LastShot),
+            (4, WeaponAnim::Rechamber),
+            (5, WeaponAnim::AdsFire),
+            (6, WeaponAnim::AdsLastShot),
+            (7, WeaponAnim::AdsRechamber),
+            (8, WeaponAnim::Melee),
+            (9, WeaponAnim::Drop),
+            (10, WeaponAnim::Raise),
+            (11, WeaponAnim::Reload),
+            (12, WeaponAnim::ReloadEmpty),
+            (13, WeaponAnim::ReloadStart),
+            (14, WeaponAnim::ReloadEnd),
+            (15, WeaponAnim::AltDrop),
+            (16, WeaponAnim::AltRaise),
+            (17, WeaponAnim::HoldFire),
+            (99, WeaponAnim::Idle),
+        ];
+        for (index, want) in cases {
+            // Each index is tested both bare and with the restart toggle set,
+            // since the mapping must mask it off first.
+            assert_eq!(view_anim(&def, index, 0.0, 0, false), want, "index {index}");
+            assert_eq!(
+                view_anim(&def, index | 512, 0.0, 0, false),
+                want,
+                "index {index} | 512"
+            );
+        }
+
+        // Index 0, idle: ads_frac >= 1 or a rising trend hold AdsUp, a
+        // falling trend holds AdsDown, an empty clip with the key present
+        // shows EmptyIdle, and otherwise it's plain Idle.
+        assert_eq!(view_anim(&def, 0, 1.0, 0, false), WeaponAnim::AdsUp);
+        assert_eq!(view_anim(&def, 0, 0.4, 1, false), WeaponAnim::AdsUp);
+        assert_eq!(view_anim(&def, 0, 0.4, -1, false), WeaponAnim::AdsDown);
+        assert_eq!(view_anim(&def, 0, 0.0, 0, true), WeaponAnim::EmptyIdle);
+        assert_eq!(view_anim(&def, 0, 0.0, 0, false), WeaponAnim::Idle);
+
+        // No emptyIdleAnim in the file: clip_empty falls back to plain Idle.
+        let bare = WeaponDef::default();
+        assert_eq!(view_anim(&bare, 0, 0.0, 0, true), WeaponAnim::Idle);
+    }
+
+    #[test]
+    fn finished_clip_falls_to_idle() {
+        let def = full_def();
+        let (anim, ms) = resolve(&def, WeaponAnim::Fire, 500.0, 400.0, WeaponAnim::Idle);
+        assert_eq!(anim, WeaponAnim::Idle);
+        assert_eq!(ms, 100.0, "the overrun carries into the idle clip");
+
+        // Still running: unchanged.
+        let (anim, ms) = resolve(&def, WeaponAnim::Fire, 300.0, 400.0, WeaponAnim::Idle);
+        assert_eq!(anim, WeaponAnim::Fire);
+        assert_eq!(ms, 300.0);
+
+        // Idle kinds never time out, however long ms_in runs.
+        let (anim, _) = resolve(&def, WeaponAnim::Idle, 1e9, 400.0, WeaponAnim::Idle);
+        assert_eq!(anim, WeaponAnim::Idle);
+    }
+
+    #[test]
+    fn hold_fire_holds_past_its_clip() {
+        let def = full_def();
+        assert_eq!(
+            resolve(
+                &def,
+                WeaponAnim::HoldFire,
+                10_000.0,
+                600.0,
+                WeaponAnim::Idle
+            ),
+            (WeaponAnim::HoldFire, 10_000.0)
+        );
+    }
+
+    #[test]
+    fn blank_key_falls_back() {
+        let Some(fs) = crate::testing::game_fs() else {
+            return;
+        };
+        let kar = load(&fs, "kar98k_mp").unwrap();
+        assert!(
+            !kar.anim_keys.contains(&WeaponAnim::ReloadStart),
+            "kar98k_mp's reloadStartAnim is blank"
+        );
+        let (anim, ms) = resolve(&kar, WeaponAnim::ReloadStart, 10.0, 400.0, WeaponAnim::Idle);
+        assert_eq!(anim, WeaponAnim::Idle);
+        assert_eq!(
+            ms, 10.0,
+            "no clip length applies to a clip that never loaded"
+        );
+    }
+
+    /// Retail's zoom: none until the fraction enters the tail, then linear
+    /// to `adsZoomFov` at 1, the tail picked by the sight's direction.
+    #[test]
+    fn the_sight_zooms_over_the_tail_of_the_fraction() {
+        let kar = WeaponDef {
+            aim_down_sight: true,
+            ads_zoom_fov: 50.0,
+            ads_zoom_in_frac: 0.5,
+            ads_zoom_out_frac: 0.25,
+            ..def()
+        };
+        let fov = |frac, zooming_in| view_fov_x(Some(&kar), frac, zooming_in, false, false);
+        assert_eq!(fov(0.0, true), CG_FOV);
+        assert_eq!(fov(0.4, true), CG_FOV, "short of the in tail");
+        assert!((fov(0.75, true) - 65.0).abs() < 1e-4, "{}", fov(0.75, true));
+        assert_eq!(fov(1.0, true), 50.0);
+        assert_eq!(fov(0.7, false), CG_FOV, "short of the out tail");
+        assert!((fov(0.875, false) - 65.0).abs() < 1e-4);
+        let no_sight = WeaponDef {
+            aim_down_sight: false,
+            ..kar.clone()
+        };
+        assert_eq!(view_fov_x(Some(&no_sight), 1.0, true, false, false), CG_FOV);
+        assert_eq!(
+            view_fov_x(None, 0.0, false, true, false),
+            90.0,
+            "intermission"
+        );
+        assert_eq!(
+            view_fov_x(Some(&kar), 1.0, true, true, true),
+            55.0,
+            "mounted"
+        );
+    }
+}

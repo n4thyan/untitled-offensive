@@ -1,0 +1,1480 @@
+# Retail CoD 1.1d dedicated server playerstate under weapon input.
+# map mp_pavlov, g_gametype dm, joined allies, weapon mosin_nagant_mp, dedicated 1,
+# sv_maxclients 8, sv_pure 0, stock scr_* defaults, one client on the server.
+# Captured with tools/run_server.sh and --net-probe --save-combat.
+# The fire bit is tapped, not held: the stock rifle is semi-automatic and a
+# held bit fires one shot and then nothing. !input carries the held input,
+# the tapped bits, how many taps and the tap timing, all in ms.
+# One !trace line per snapshot, because the event ring holds four slots and
+# overwrites: a shot is a transient no settled sample can hold. The field
+# lines after a step's traces are the playerstate it ended at.
+# !observed carries what the step turned out to be: whether a fire step ever
+# saw weaponstate 3, how many shots and how much eventSequence it gained, and
+# the distinct values each channel took. A fire step with fired=0 is a broken
+# capture and is flagged above its section as well.
+# Values are the raw i32 wire words, floats as their bit patterns.
+[step advance]
+!input buttons=0 wbuttons=0 up=0 forward=127 right=0 yaw=0 pulse_buttons=0 pulse_wbuttons=0 pulses=0 pulse_hold_ms=32 pulse_period_ms=378 hold_ms=6000 walks=1 wait_ready=0
+!observed fire_step=0 expected_shots=0 fired=0 shots_seen=0 seq_delta=3 waited_ready_ms=0 retried=0 snapshots=121 weaponstate=0 legsAnim=634,94 torsoAnim=0 weapAnim=0
+!trace ms=0 serverTime=159450 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=0 events[0]=0 events[1]=0 events[2]=0 events[3]=0
+!trace ms=64 serverTime=159500 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=0 events[0]=0 events[1]=0 events[2]=0 events[3]=0
+!trace ms=80 serverTime=159550 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=0 events[0]=0 events[1]=0 events[2]=0 events[3]=0
+!trace ms=145 serverTime=159600 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=0 events[0]=0 events[1]=0 events[2]=0 events[3]=0
+!trace ms=194 serverTime=159650 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=0 events[0]=0 events[1]=0 events[2]=0 events[3]=0
+!trace ms=242 serverTime=159700 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=0 events[0]=0 events[1]=0 events[2]=0 events[3]=0
+!trace ms=291 serverTime=159750 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=340 serverTime=159800 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=388 serverTime=159850 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=437 serverTime=159900 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=486 serverTime=159950 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=534 serverTime=160000 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=583 serverTime=160050 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=632 serverTime=160100 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=680 serverTime=160150 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=745 serverTime=160200 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=794 serverTime=160250 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=843 serverTime=160300 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=891 serverTime=160350 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=940 serverTime=160400 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=989 serverTime=160450 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1038 serverTime=160500 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1086 serverTime=160550 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1135 serverTime=160600 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1184 serverTime=160650 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1232 serverTime=160700 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1281 serverTime=160750 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1346 serverTime=160800 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1395 serverTime=160850 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1443 serverTime=160900 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1492 serverTime=160950 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1541 serverTime=161000 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1589 serverTime=161050 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1638 serverTime=161100 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1687 serverTime=161150 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1736 serverTime=161200 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1784 serverTime=161250 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1833 serverTime=161300 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1882 serverTime=161350 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1930 serverTime=161400 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=1995 serverTime=161450 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2028 serverTime=161500 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2092 serverTime=161550 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2141 serverTime=161600 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2190 serverTime=161650 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2239 serverTime=161700 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2287 serverTime=161750 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2336 serverTime=161800 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2385 serverTime=161850 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2433 serverTime=161900 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2482 serverTime=161950 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2531 serverTime=162000 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2595 serverTime=162050 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2628 serverTime=162100 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2693 serverTime=162150 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2742 serverTime=162200 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2790 serverTime=162250 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2839 serverTime=162300 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2888 serverTime=162350 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2936 serverTime=162400 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=2985 serverTime=162450 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=3034 serverTime=162500 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=3082 serverTime=162550 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=3131 serverTime=162600 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=3196 serverTime=162650 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=3245 serverTime=162700 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=1 events[0]=6 events[1]=0 events[2]=0 events[3]=0
+!trace ms=3293 serverTime=162750 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=2 events[0]=6 events[1]=6 events[2]=0 events[3]=0
+!trace ms=3342 serverTime=162800 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=2 events[0]=6 events[1]=6 events[2]=0 events[3]=0
+!trace ms=3391 serverTime=162850 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=2 events[0]=6 events[1]=6 events[2]=0 events[3]=0
+!trace ms=3439 serverTime=162900 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=2 events[0]=6 events[1]=6 events[2]=0 events[3]=0
+!trace ms=3488 serverTime=162950 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=2 events[0]=6 events[1]=6 events[2]=0 events[3]=0
+!trace ms=3537 serverTime=163000 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=2 events[0]=6 events[1]=6 events[2]=0 events[3]=0
+!trace ms=3585 serverTime=163050 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=2 events[0]=6 events[1]=6 events[2]=0 events[3]=0
+!trace ms=3634 serverTime=163100 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=94 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=3683 serverTime=163150 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=3731 serverTime=163200 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=3796 serverTime=163250 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=3829 serverTime=163300 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=3893 serverTime=163350 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=3942 serverTime=163400 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=3991 serverTime=163450 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4039 serverTime=163500 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4088 serverTime=163550 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4137 serverTime=163600 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4185 serverTime=163650 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4234 serverTime=163700 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4282 serverTime=163750 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4331 serverTime=163800 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4396 serverTime=163850 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4428 serverTime=163900 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4493 serverTime=163950 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4542 serverTime=164000 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4591 serverTime=164050 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4639 serverTime=164100 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4688 serverTime=164150 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4737 serverTime=164200 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4785 serverTime=164250 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4834 serverTime=164300 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4883 serverTime=164350 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4931 serverTime=164400 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=4996 serverTime=164450 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5029 serverTime=164500 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5093 serverTime=164550 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5142 serverTime=164600 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5191 serverTime=164650 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5239 serverTime=164700 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5288 serverTime=164750 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5337 serverTime=164800 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5385 serverTime=164850 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5434 serverTime=164900 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5483 serverTime=164950 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5531 serverTime=165000 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5596 serverTime=165050 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5629 serverTime=165100 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5694 serverTime=165150 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5742 serverTime=165200 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5791 serverTime=165250 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5840 serverTime=165300 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5888 serverTime=165350 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5937 serverTime=165400 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=5985 serverTime=165450 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+commandTime 165432
+origin[1] 1176665216
+origin[0] -974616832
+origin[2] 1134206332
+viewangles[1] -1022951424
+viewangles[0] 0
+iCompassFriendInfo 0
+eFlags 16
+bobCycle 0
+viewHeightCurrent 1114636288
+eventSequence 3
+legsAnim 634
+pm_flags 262144
+delta_angles[1] 40960
+velocity[1] 0
+velocity[0] 0
+speed 190
+mins[0] -1049624576
+mins[1] -1049624576
+maxs[0] 1097859072
+maxs[1] 1097859072
+maxs[2] 1116471296
+proneViewHeight 11
+crouchViewHeight 40
+standViewHeight 60
+deadViewHeight 8
+walkSpeedScale 1053609165
+runSpeedScale 1065353216
+proneSpeedScale 1041865114
+crouchSpeedScale 1059481190
+strafeSpeedScale 1061997773
+backSpeedScale 1060320051
+leanSpeedScale 1053609165
+friction 1065353216
+groundEntityNum 1022
+viewHeightTarget 60
+events[0] 6
+weapons[0] 134481920
+weaponslots[0] 184553984
+gravity 800
+serverCursorHintString 255
+viewmodelIndex 52
+events[1] 6
+events[2] 143
+events[3] 0
+delta_angles[0] 0
+weapon 18
+movementDir 0
+viewHeightLerpTarget 0
+weaponslots[4] 27
+proneDirection 0
+aimSpreadScale 1132396544
+weapAnim 0
+jumpTime 0
+velocity[2] 0
+weaponTime 0
+proneTorsoPitch 0
+proneDirectionPitch 0
+fTorsoPitch 0
+fWaistPitch 0
+fTorsoHeight 0
+weaponstate 0
+torsoTimer 0
+torsoAnim 0
+eventParms[0] 0
+vLadderVec[0] 0
+eventParms[3] 0
+viewHeightLerpDown 0
+weaponDelay 0
+eventParms[1] 0
+viewHeightLerpTime 0
+eventParms[2] 129
+vLadderVec[1] 0
+fWeaponPosFrac 0
+pm_type 0
+legsTimer 0
+fJumpPeak 0
+leanf 0
+damageEvent 0
+damageYaw 0
+damagePitch 0
+damageCount 0
+weaponrechamber[0] 0
+grenadeTimeLeft 0
+pm_time 0
+iFoliageSoundTime 0
+deltaTime 0
+serverCursorHint 0
+serverCursorHintVal 0
+shellshockIndex 0
+shellshockTime 0
+shellshockDuration 0
+delta_angles[2] 0
+vLadderVec[2] 0
+clientNum 1
+weapons[1] 0
+weaponrechamber[1] 0
+viewangles[2] 0
+viewHeightLerpPosAdj 0
+mins[2] 0
+viewlocked 0
+viewlocked_entNum 0
+gunfx 0
+[step idle]
+!input buttons=0 wbuttons=0 up=0 forward=0 right=0 yaw=0 pulse_buttons=0 pulse_wbuttons=0 pulses=0 pulse_hold_ms=32 pulse_period_ms=378 hold_ms=1500 walks=0 wait_ready=0
+!observed fire_step=0 expected_shots=0 fired=0 shots_seen=0 seq_delta=0 waited_ready_ms=0 retried=0 snapshots=31 weaponstate=0 legsAnim=634 torsoAnim=0 weapAnim=0
+!trace ms=16 serverTime=165500 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=64 serverTime=165550 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=113 serverTime=165600 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=178 serverTime=165650 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=211 serverTime=165700 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=276 serverTime=165750 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=325 serverTime=165800 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=374 serverTime=165850 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=422 serverTime=165900 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=471 serverTime=165950 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=520 serverTime=166000 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=570 serverTime=166050 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=620 serverTime=166100 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=670 serverTime=166150 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=719 serverTime=166200 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=768 serverTime=166250 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=817 serverTime=166300 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=865 serverTime=166350 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=914 serverTime=166400 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=963 serverTime=166450 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=1011 serverTime=166500 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=1076 serverTime=166550 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=1125 serverTime=166600 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=1174 serverTime=166650 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=1222 serverTime=166700 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=1271 serverTime=166750 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=1320 serverTime=166800 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=1368 serverTime=166850 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=1417 serverTime=166900 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=1466 serverTime=166950 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=1515 serverTime=167000 buttons=0 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+commandTime 166982
+origin[1] 1176665216
+origin[0] -974616832
+origin[2] 1134206332
+viewangles[1] 1119092736
+viewangles[0] 0
+iCompassFriendInfo 0
+eFlags 16
+bobCycle 0
+viewHeightCurrent 1114636288
+eventSequence 3
+legsAnim 634
+pm_flags 262144
+delta_angles[1] 40960
+velocity[1] 0
+velocity[0] 0
+speed 190
+mins[0] -1049624576
+mins[1] -1049624576
+maxs[0] 1097859072
+maxs[1] 1097859072
+maxs[2] 1116471296
+proneViewHeight 11
+crouchViewHeight 40
+standViewHeight 60
+deadViewHeight 8
+walkSpeedScale 1053609165
+runSpeedScale 1065353216
+proneSpeedScale 1041865114
+crouchSpeedScale 1059481190
+strafeSpeedScale 1061997773
+backSpeedScale 1060320051
+leanSpeedScale 1053609165
+friction 1065353216
+groundEntityNum 1022
+viewHeightTarget 60
+events[0] 6
+weapons[0] 134481920
+weaponslots[0] 184553984
+gravity 800
+serverCursorHintString 255
+viewmodelIndex 52
+events[1] 6
+events[2] 143
+events[3] 0
+delta_angles[0] 0
+weapon 18
+movementDir 0
+viewHeightLerpTarget 0
+weaponslots[4] 27
+proneDirection 0
+aimSpreadScale 0
+weapAnim 0
+jumpTime 0
+velocity[2] 0
+weaponTime 0
+proneTorsoPitch 0
+proneDirectionPitch 0
+fTorsoPitch 0
+fWaistPitch 0
+fTorsoHeight 0
+weaponstate 0
+torsoTimer 0
+torsoAnim 0
+eventParms[0] 0
+vLadderVec[0] 0
+eventParms[3] 0
+viewHeightLerpDown 0
+weaponDelay 0
+eventParms[1] 0
+viewHeightLerpTime 0
+eventParms[2] 129
+vLadderVec[1] 0
+fWeaponPosFrac 0
+pm_type 0
+legsTimer 0
+fJumpPeak 0
+leanf 0
+damageEvent 0
+damageYaw 0
+damagePitch 0
+damageCount 0
+weaponrechamber[0] 0
+grenadeTimeLeft 0
+pm_time 0
+iFoliageSoundTime 0
+deltaTime 0
+serverCursorHint 0
+serverCursorHintVal 0
+shellshockIndex 0
+shellshockTime 0
+shellshockDuration 0
+delta_angles[2] 0
+vLadderVec[2] 0
+clientNum 1
+weapons[1] 0
+weaponrechamber[1] 0
+viewangles[2] 0
+viewHeightLerpPosAdj 0
+mins[2] 0
+viewlocked 0
+viewlocked_entNum 0
+gunfx 0
+[step single_shot]
+!input buttons=0 wbuttons=0 up=0 forward=0 right=0 yaw=0 pulse_buttons=1 pulse_wbuttons=0 pulses=1 pulse_hold_ms=32 pulse_period_ms=378 hold_ms=1500 walks=0 wait_ready=1
+!observed fire_step=1 expected_shots=1 fired=1 shots_seen=1 seq_delta=3 waited_ready_ms=509 retried=0 snapshots=31 weaponstate=0,3,4 legsAnim=634 torsoAnim=0,765 weapAnim=0,514,516
+!trace ms=0 serverTime=167500 buttons=1 wbuttons=0 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=0 eventSequence=3 events[0]=6 events[1]=6 events[2]=143 events[3]=0
+!trace ms=32 serverTime=167550 buttons=0 wbuttons=0 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=4 events[0]=6 events[1]=6 events[2]=143 events[3]=159
+!trace ms=81 serverTime=167600 buttons=0 wbuttons=0 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=4 events[0]=6 events[1]=6 events[2]=143 events[3]=159
+!trace ms=130 serverTime=167650 buttons=0 wbuttons=0 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=4 events[0]=6 events[1]=6 events[2]=143 events[3]=159
+!trace ms=178 serverTime=167700 buttons=0 wbuttons=0 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=4 events[0]=6 events[1]=6 events[2]=143 events[3]=159
+!trace ms=227 serverTime=167750 buttons=0 wbuttons=0 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=4 events[0]=6 events[1]=6 events[2]=143 events[3]=159
+!trace ms=276 serverTime=167800 buttons=0 wbuttons=0 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=4 events[0]=6 events[1]=6 events[2]=143 events[3]=159
+!trace ms=324 serverTime=167850 buttons=0 wbuttons=0 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=4 events[0]=6 events[1]=6 events[2]=143 events[3]=159
+!trace ms=373 serverTime=167900 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=765 eventSequence=5 events[0]=162 events[1]=6 events[2]=143 events[3]=159
+!trace ms=438 serverTime=167950 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=765 eventSequence=5 events[0]=162 events[1]=6 events[2]=143 events[3]=159
+!trace ms=470 serverTime=168000 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=765 eventSequence=5 events[0]=162 events[1]=6 events[2]=143 events[3]=159
+!trace ms=535 serverTime=168050 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=765 eventSequence=5 events[0]=162 events[1]=6 events[2]=143 events[3]=159
+!trace ms=584 serverTime=168100 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=5 events[0]=162 events[1]=6 events[2]=143 events[3]=159
+!trace ms=633 serverTime=168150 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=5 events[0]=162 events[1]=6 events[2]=143 events[3]=159
+!trace ms=682 serverTime=168200 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=5 events[0]=162 events[1]=6 events[2]=143 events[3]=159
+!trace ms=731 serverTime=168250 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=5 events[0]=162 events[1]=6 events[2]=143 events[3]=159
+!trace ms=780 serverTime=168300 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=6 events[0]=162 events[1]=163 events[2]=143 events[3]=159
+!trace ms=828 serverTime=168350 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=6 events[0]=162 events[1]=163 events[2]=143 events[3]=159
+!trace ms=877 serverTime=168400 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=6 events[0]=162 events[1]=163 events[2]=143 events[3]=159
+!trace ms=927 serverTime=168450 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=6 events[0]=162 events[1]=163 events[2]=143 events[3]=159
+!trace ms=977 serverTime=168500 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=6 events[0]=162 events[1]=163 events[2]=143 events[3]=159
+!trace ms=1026 serverTime=168550 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=6 events[0]=162 events[1]=163 events[2]=143 events[3]=159
+!trace ms=1075 serverTime=168600 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=6 events[0]=162 events[1]=163 events[2]=143 events[3]=159
+!trace ms=1125 serverTime=168650 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=6 events[0]=162 events[1]=163 events[2]=143 events[3]=159
+!trace ms=1174 serverTime=168700 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=6 events[0]=162 events[1]=163 events[2]=143 events[3]=159
+!trace ms=1223 serverTime=168750 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=6 events[0]=162 events[1]=163 events[2]=143 events[3]=159
+!trace ms=1272 serverTime=168800 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=6 events[0]=162 events[1]=163 events[2]=143 events[3]=159
+!trace ms=1338 serverTime=168850 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=6 events[0]=162 events[1]=163 events[2]=143 events[3]=159
+!trace ms=1372 serverTime=168900 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=6 events[0]=162 events[1]=163 events[2]=143 events[3]=159
+!trace ms=1421 serverTime=168950 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=6 events[0]=162 events[1]=163 events[2]=143 events[3]=159
+!trace ms=1471 serverTime=169000 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=6 events[0]=162 events[1]=163 events[2]=143 events[3]=159
+commandTime 168983
+origin[1] 1176665216
+origin[0] -974616832
+origin[2] 1134206332
+viewangles[1] 1119092736
+viewangles[0] 0
+iCompassFriendInfo 0
+eFlags 16
+bobCycle 0
+viewHeightCurrent 1114636288
+eventSequence 6
+legsAnim 634
+pm_flags 262144
+delta_angles[1] 40960
+velocity[1] 0
+velocity[0] 0
+speed 190
+mins[0] -1049624576
+mins[1] -1049624576
+maxs[0] 1097859072
+maxs[1] 1097859072
+maxs[2] 1116471296
+proneViewHeight 11
+crouchViewHeight 40
+standViewHeight 60
+deadViewHeight 8
+walkSpeedScale 1053609165
+runSpeedScale 1065353216
+proneSpeedScale 1041865114
+crouchSpeedScale 1059481190
+strafeSpeedScale 1061997773
+backSpeedScale 1060320051
+leanSpeedScale 1053609165
+friction 1065353216
+groundEntityNum 1022
+viewHeightTarget 60
+events[0] 162
+weapons[0] 134481920
+weaponslots[0] 184553984
+gravity 800
+serverCursorHintString 255
+viewmodelIndex 52
+events[1] 163
+events[2] 143
+events[3] 159
+delta_angles[0] 0
+weapon 18
+movementDir 0
+viewHeightLerpTarget 0
+weaponslots[4] 27
+proneDirection 0
+aimSpreadScale 0
+weapAnim 516
+jumpTime 0
+velocity[2] 0
+weaponTime 0
+proneTorsoPitch 0
+proneDirectionPitch 0
+fTorsoPitch 0
+fWaistPitch 0
+fTorsoHeight 0
+weaponstate 0
+torsoTimer 0
+torsoAnim 0
+eventParms[0] 0
+vLadderVec[0] 0
+eventParms[3] 0
+viewHeightLerpDown 0
+weaponDelay 0
+eventParms[1] 0
+viewHeightLerpTime 0
+eventParms[2] 129
+vLadderVec[1] 0
+fWeaponPosFrac 0
+pm_type 0
+legsTimer 0
+fJumpPeak 0
+leanf 0
+damageEvent 0
+damageYaw 0
+damagePitch 0
+damageCount 0
+weaponrechamber[0] 0
+grenadeTimeLeft 0
+pm_time 0
+iFoliageSoundTime 0
+deltaTime 0
+serverCursorHint 0
+serverCursorHintVal 0
+shellshockIndex 0
+shellshockTime 0
+shellshockDuration 0
+delta_angles[2] 0
+vLadderVec[2] 0
+clientNum 1
+weapons[1] 0
+weaponrechamber[1] 0
+viewangles[2] 0
+viewHeightLerpPosAdj 0
+mins[2] 0
+viewlocked 0
+viewlocked_entNum 0
+gunfx 0
+[step sustained_fire]
+!input buttons=0 wbuttons=0 up=0 forward=0 right=0 yaw=0 pulse_buttons=1 pulse_wbuttons=0 pulses=6 pulse_hold_ms=32 pulse_period_ms=378 hold_ms=2500 walks=0 wait_ready=1
+!observed fire_step=1 expected_shots=6 fired=1 shots_seen=2 seq_delta=6 waited_ready_ms=506 retried=0 snapshots=51 weaponstate=0,3,4 legsAnim=634 torsoAnim=0,765 weapAnim=2,4,514,516
+!trace ms=0 serverTime=169550 buttons=1 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=6 events[0]=162 events[1]=163 events[2]=143 events[3]=159
+!trace ms=48 serverTime=169600 buttons=0 wbuttons=0 weaponstate=3 weapAnim=2 legsAnim=634 torsoAnim=765 eventSequence=7 events[0]=162 events[1]=163 events[2]=159 events[3]=159
+!trace ms=97 serverTime=169650 buttons=0 wbuttons=0 weaponstate=3 weapAnim=2 legsAnim=634 torsoAnim=765 eventSequence=7 events[0]=162 events[1]=163 events[2]=159 events[3]=159
+!trace ms=146 serverTime=169700 buttons=0 wbuttons=0 weaponstate=3 weapAnim=2 legsAnim=634 torsoAnim=765 eventSequence=7 events[0]=162 events[1]=163 events[2]=159 events[3]=159
+!trace ms=195 serverTime=169750 buttons=0 wbuttons=0 weaponstate=3 weapAnim=2 legsAnim=634 torsoAnim=765 eventSequence=7 events[0]=162 events[1]=163 events[2]=159 events[3]=159
+!trace ms=243 serverTime=169800 buttons=0 wbuttons=0 weaponstate=3 weapAnim=2 legsAnim=634 torsoAnim=765 eventSequence=7 events[0]=162 events[1]=163 events[2]=159 events[3]=159
+!trace ms=308 serverTime=169850 buttons=0 wbuttons=0 weaponstate=3 weapAnim=2 legsAnim=634 torsoAnim=765 eventSequence=7 events[0]=162 events[1]=163 events[2]=159 events[3]=159
+!trace ms=341 serverTime=169900 buttons=0 wbuttons=0 weaponstate=3 weapAnim=2 legsAnim=634 torsoAnim=765 eventSequence=7 events[0]=162 events[1]=163 events[2]=159 events[3]=159
+!trace ms=406 serverTime=169950 buttons=1 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=765 eventSequence=8 events[0]=162 events[1]=163 events[2]=159 events[3]=162
+!trace ms=455 serverTime=170000 buttons=0 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=765 eventSequence=8 events[0]=162 events[1]=163 events[2]=159 events[3]=162
+!trace ms=503 serverTime=170050 buttons=0 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=765 eventSequence=8 events[0]=162 events[1]=163 events[2]=159 events[3]=162
+!trace ms=552 serverTime=170100 buttons=0 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=8 events[0]=162 events[1]=163 events[2]=159 events[3]=162
+!trace ms=601 serverTime=170150 buttons=0 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=8 events[0]=162 events[1]=163 events[2]=159 events[3]=162
+!trace ms=650 serverTime=170200 buttons=0 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=8 events[0]=162 events[1]=163 events[2]=159 events[3]=162
+!trace ms=698 serverTime=170250 buttons=0 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=8 events[0]=162 events[1]=163 events[2]=159 events[3]=162
+!trace ms=747 serverTime=170300 buttons=0 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=8 events[0]=162 events[1]=163 events[2]=159 events[3]=162
+!trace ms=796 serverTime=170350 buttons=0 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=9 events[0]=163 events[1]=163 events[2]=159 events[3]=162
+!trace ms=844 serverTime=170400 buttons=0 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=9 events[0]=163 events[1]=163 events[2]=159 events[3]=162
+!trace ms=893 serverTime=170450 buttons=0 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=9 events[0]=163 events[1]=163 events[2]=159 events[3]=162
+!trace ms=958 serverTime=170500 buttons=0 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=9 events[0]=163 events[1]=163 events[2]=159 events[3]=162
+!trace ms=991 serverTime=170550 buttons=0 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=9 events[0]=163 events[1]=163 events[2]=159 events[3]=162
+!trace ms=1056 serverTime=170600 buttons=0 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=9 events[0]=163 events[1]=163 events[2]=159 events[3]=162
+!trace ms=1105 serverTime=170650 buttons=0 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=9 events[0]=163 events[1]=163 events[2]=159 events[3]=162
+!trace ms=1153 serverTime=170700 buttons=1 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=9 events[0]=163 events[1]=163 events[2]=159 events[3]=162
+!trace ms=1202 serverTime=170750 buttons=0 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=9 events[0]=163 events[1]=163 events[2]=159 events[3]=162
+!trace ms=1251 serverTime=170800 buttons=0 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=9 events[0]=163 events[1]=163 events[2]=159 events[3]=162
+!trace ms=1300 serverTime=170850 buttons=0 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=9 events[0]=163 events[1]=163 events[2]=159 events[3]=162
+!trace ms=1349 serverTime=170900 buttons=0 wbuttons=0 weaponstate=4 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=9 events[0]=163 events[1]=163 events[2]=159 events[3]=162
+!trace ms=1398 serverTime=170950 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=9 events[0]=163 events[1]=163 events[2]=159 events[3]=162
+!trace ms=1447 serverTime=171000 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=9 events[0]=163 events[1]=163 events[2]=159 events[3]=162
+!trace ms=1496 serverTime=171050 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=9 events[0]=163 events[1]=163 events[2]=159 events[3]=162
+!trace ms=1544 serverTime=171100 buttons=0 wbuttons=0 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=10 events[0]=163 events[1]=159 events[2]=159 events[3]=162
+!trace ms=1593 serverTime=171150 buttons=0 wbuttons=0 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=10 events[0]=163 events[1]=159 events[2]=159 events[3]=162
+!trace ms=1658 serverTime=171200 buttons=0 wbuttons=0 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=10 events[0]=163 events[1]=159 events[2]=159 events[3]=162
+!trace ms=1707 serverTime=171250 buttons=0 wbuttons=0 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=10 events[0]=163 events[1]=159 events[2]=159 events[3]=162
+!trace ms=1756 serverTime=171300 buttons=0 wbuttons=0 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=10 events[0]=163 events[1]=159 events[2]=159 events[3]=162
+!trace ms=1804 serverTime=171350 buttons=0 wbuttons=0 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=10 events[0]=163 events[1]=159 events[2]=159 events[3]=162
+!trace ms=1853 serverTime=171400 buttons=0 wbuttons=0 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=10 events[0]=163 events[1]=159 events[2]=159 events[3]=162
+!trace ms=1902 serverTime=171450 buttons=1 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=765 eventSequence=11 events[0]=163 events[1]=159 events[2]=162 events[3]=162
+!trace ms=1951 serverTime=171500 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=765 eventSequence=11 events[0]=163 events[1]=159 events[2]=162 events[3]=162
+!trace ms=1999 serverTime=171550 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=765 eventSequence=11 events[0]=163 events[1]=159 events[2]=162 events[3]=162
+!trace ms=2048 serverTime=171600 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=11 events[0]=163 events[1]=159 events[2]=162 events[3]=162
+!trace ms=2097 serverTime=171650 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=11 events[0]=163 events[1]=159 events[2]=162 events[3]=162
+!trace ms=2145 serverTime=171700 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=11 events[0]=163 events[1]=159 events[2]=162 events[3]=162
+!trace ms=2194 serverTime=171750 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=11 events[0]=163 events[1]=159 events[2]=162 events[3]=162
+!trace ms=2243 serverTime=171800 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=11 events[0]=163 events[1]=159 events[2]=162 events[3]=162
+!trace ms=2308 serverTime=171850 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=12 events[0]=163 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2356 serverTime=171900 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=12 events[0]=163 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2405 serverTime=171950 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=12 events[0]=163 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2454 serverTime=172000 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=12 events[0]=163 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2503 serverTime=172050 buttons=0 wbuttons=0 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=12 events[0]=163 events[1]=159 events[2]=162 events[3]=163
+commandTime 172032
+origin[1] 1176665216
+origin[0] -974616832
+origin[2] 1134206332
+viewangles[1] 1119092736
+viewangles[0] 0
+iCompassFriendInfo 0
+eFlags 16
+bobCycle 0
+viewHeightCurrent 1114636288
+eventSequence 12
+legsAnim 634
+pm_flags 262144
+delta_angles[1] 40960
+velocity[1] 0
+velocity[0] 0
+speed 190
+mins[0] -1049624576
+mins[1] -1049624576
+maxs[0] 1097859072
+maxs[1] 1097859072
+maxs[2] 1116471296
+proneViewHeight 11
+crouchViewHeight 40
+standViewHeight 60
+deadViewHeight 8
+walkSpeedScale 1053609165
+runSpeedScale 1065353216
+proneSpeedScale 1041865114
+crouchSpeedScale 1059481190
+strafeSpeedScale 1061997773
+backSpeedScale 1060320051
+leanSpeedScale 1053609165
+friction 1065353216
+groundEntityNum 1022
+viewHeightTarget 60
+events[0] 163
+weapons[0] 134481920
+weaponslots[0] 184553984
+gravity 800
+serverCursorHintString 255
+viewmodelIndex 52
+events[1] 159
+events[2] 162
+events[3] 163
+delta_angles[0] 0
+weapon 18
+movementDir 0
+viewHeightLerpTarget 0
+weaponslots[4] 27
+proneDirection 0
+aimSpreadScale 0
+weapAnim 516
+jumpTime 0
+velocity[2] 0
+weaponTime 384
+proneTorsoPitch 0
+proneDirectionPitch 0
+fTorsoPitch 0
+fWaistPitch 0
+fTorsoHeight 0
+weaponstate 4
+torsoTimer 0
+torsoAnim 0
+eventParms[0] 0
+vLadderVec[0] 0
+eventParms[3] 0
+viewHeightLerpDown 0
+weaponDelay 0
+eventParms[1] 0
+viewHeightLerpTime 0
+eventParms[2] 0
+vLadderVec[1] 0
+fWeaponPosFrac 0
+pm_type 0
+legsTimer 0
+fJumpPeak 0
+leanf 0
+damageEvent 0
+damageYaw 0
+damagePitch 0
+damageCount 0
+weaponrechamber[0] 0
+grenadeTimeLeft 0
+pm_time 0
+iFoliageSoundTime 0
+deltaTime 0
+serverCursorHint 0
+serverCursorHintVal 0
+shellshockIndex 0
+shellshockTime 0
+shellshockDuration 0
+delta_angles[2] 0
+vLadderVec[2] 0
+clientNum 1
+weapons[1] 0
+weaponrechamber[1] 0
+viewangles[2] 0
+viewHeightLerpPosAdj 0
+mins[2] 0
+viewlocked 0
+viewlocked_entNum 0
+gunfx 0
+[step reload]
+!input buttons=0 wbuttons=0 up=0 forward=0 right=0 yaw=0 pulse_buttons=0 pulse_wbuttons=8 pulses=1 pulse_hold_ms=32 pulse_period_ms=378 hold_ms=3600 walks=0 wait_ready=1
+!observed fire_step=0 expected_shots=0 fired=0 shots_seen=0 seq_delta=1 waited_ready_ms=876 retried=0 snapshots=73 weaponstate=0,5 legsAnim=634 torsoAnim=0,743 weapAnim=11,512,516
+!trace ms=0 serverTime=172950 buttons=0 wbuttons=8 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=12 events[0]=163 events[1]=159 events[2]=162 events[3]=163
+!trace ms=48 serverTime=173000 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=97 serverTime=173050 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=146 serverTime=173100 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=210 serverTime=173150 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=259 serverTime=173200 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=308 serverTime=173250 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=357 serverTime=173300 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=405 serverTime=173350 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=454 serverTime=173400 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=503 serverTime=173450 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=551 serverTime=173500 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=600 serverTime=173550 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=649 serverTime=173600 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=713 serverTime=173650 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=746 serverTime=173700 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=811 serverTime=173750 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=859 serverTime=173800 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=908 serverTime=173850 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=957 serverTime=173900 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1005 serverTime=173950 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1054 serverTime=174000 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1103 serverTime=174050 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1151 serverTime=174100 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1200 serverTime=174150 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1249 serverTime=174200 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1298 serverTime=174250 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1362 serverTime=174300 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1395 serverTime=174350 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1460 serverTime=174400 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1508 serverTime=174450 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1557 serverTime=174500 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1606 serverTime=174550 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1655 serverTime=174600 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1703 serverTime=174650 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1752 serverTime=174700 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1801 serverTime=174750 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1849 serverTime=174800 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1898 serverTime=174850 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1947 serverTime=174900 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2012 serverTime=174950 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2060 serverTime=175000 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2109 serverTime=175050 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=743 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2158 serverTime=175100 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2206 serverTime=175150 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2255 serverTime=175200 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2304 serverTime=175250 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2352 serverTime=175300 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2401 serverTime=175350 buttons=0 wbuttons=0 weaponstate=5 weapAnim=11 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2450 serverTime=175400 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2515 serverTime=175450 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2547 serverTime=175500 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2612 serverTime=175550 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2661 serverTime=175600 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2709 serverTime=175650 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2758 serverTime=175700 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2807 serverTime=175750 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2855 serverTime=175800 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2904 serverTime=175850 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2953 serverTime=175900 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=3001 serverTime=175950 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=3050 serverTime=176000 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=3099 serverTime=176050 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=3163 serverTime=176100 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=3196 serverTime=176150 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=3261 serverTime=176200 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=3310 serverTime=176250 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=3358 serverTime=176300 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=3407 serverTime=176350 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=3456 serverTime=176400 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=3504 serverTime=176450 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=3553 serverTime=176500 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=3602 serverTime=176550 buttons=0 wbuttons=0 weaponstate=0 weapAnim=512 legsAnim=634 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+commandTime 176532
+origin[1] 1176665216
+origin[0] -974616832
+origin[2] 1134206332
+viewangles[1] 1119092736
+viewangles[0] 0
+iCompassFriendInfo 0
+eFlags 16
+bobCycle 0
+viewHeightCurrent 1114636288
+eventSequence 13
+legsAnim 634
+pm_flags 262144
+delta_angles[1] 40960
+velocity[1] 0
+velocity[0] 0
+speed 190
+mins[0] -1049624576
+mins[1] -1049624576
+maxs[0] 1097859072
+maxs[1] 1097859072
+maxs[2] 1116471296
+proneViewHeight 11
+crouchViewHeight 40
+standViewHeight 60
+deadViewHeight 8
+walkSpeedScale 1053609165
+runSpeedScale 1065353216
+proneSpeedScale 1041865114
+crouchSpeedScale 1059481190
+strafeSpeedScale 1061997773
+backSpeedScale 1060320051
+leanSpeedScale 1053609165
+friction 1065353216
+groundEntityNum 1022
+viewHeightTarget 60
+events[0] 151
+weapons[0] 134481920
+weaponslots[0] 184553984
+gravity 800
+serverCursorHintString 255
+viewmodelIndex 52
+events[1] 159
+events[2] 162
+events[3] 163
+delta_angles[0] 0
+weapon 18
+movementDir 0
+viewHeightLerpTarget 0
+weaponslots[4] 27
+proneDirection 0
+aimSpreadScale 0
+weapAnim 512
+jumpTime 0
+velocity[2] 0
+weaponTime 0
+proneTorsoPitch 0
+proneDirectionPitch 0
+fTorsoPitch 0
+fWaistPitch 0
+fTorsoHeight 0
+weaponstate 0
+torsoTimer 0
+torsoAnim 0
+eventParms[0] 0
+vLadderVec[0] 0
+eventParms[3] 0
+viewHeightLerpDown 0
+weaponDelay 0
+eventParms[1] 0
+viewHeightLerpTime 0
+eventParms[2] 0
+vLadderVec[1] 0
+fWeaponPosFrac 0
+pm_type 0
+legsTimer 0
+fJumpPeak 0
+leanf 0
+damageEvent 0
+damageYaw 0
+damagePitch 0
+damageCount 0
+weaponrechamber[0] 0
+grenadeTimeLeft 0
+pm_time 0
+iFoliageSoundTime 0
+deltaTime 0
+serverCursorHint 0
+serverCursorHintVal 0
+shellshockIndex 0
+shellshockTime 0
+shellshockDuration 0
+delta_angles[2] 0
+vLadderVec[2] 0
+clientNum 1
+weapons[1] 0
+weaponrechamber[1] 0
+viewangles[2] 0
+viewHeightLerpPosAdj 0
+mins[2] 0
+viewlocked 0
+viewlocked_entNum 0
+gunfx 0
+[step crouch_fire]
+!input buttons=0 wbuttons=128 up=-127 forward=0 right=0 yaw=0 pulse_buttons=1 pulse_wbuttons=0 pulses=3 pulse_hold_ms=32 pulse_period_ms=378 hold_ms=2500 walks=0 wait_ready=1
+!observed fire_step=1 expected_shots=3 fired=1 shots_seen=1 seq_delta=3 waited_ready_ms=502 retried=0 snapshots=51 weaponstate=0,3,4 legsAnim=111 torsoAnim=0,761 weapAnim=2,4,512
+!trace ms=0 serverTime=177050 buttons=1 wbuttons=128 weaponstate=0 weapAnim=512 legsAnim=111 torsoAnim=0 eventSequence=13 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=32 serverTime=177100 buttons=0 wbuttons=128 weaponstate=3 weapAnim=2 legsAnim=111 torsoAnim=761 eventSequence=14 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=81 serverTime=177150 buttons=0 wbuttons=128 weaponstate=3 weapAnim=2 legsAnim=111 torsoAnim=761 eventSequence=14 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=129 serverTime=177200 buttons=0 wbuttons=128 weaponstate=3 weapAnim=2 legsAnim=111 torsoAnim=761 eventSequence=14 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=178 serverTime=177250 buttons=0 wbuttons=128 weaponstate=3 weapAnim=2 legsAnim=111 torsoAnim=761 eventSequence=14 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=227 serverTime=177300 buttons=0 wbuttons=128 weaponstate=3 weapAnim=2 legsAnim=111 torsoAnim=761 eventSequence=14 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=275 serverTime=177350 buttons=0 wbuttons=128 weaponstate=3 weapAnim=2 legsAnim=111 torsoAnim=761 eventSequence=14 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=340 serverTime=177400 buttons=0 wbuttons=128 weaponstate=3 weapAnim=2 legsAnim=111 torsoAnim=761 eventSequence=14 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=389 serverTime=177450 buttons=1 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=761 eventSequence=15 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=437 serverTime=177500 buttons=0 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=761 eventSequence=15 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=486 serverTime=177550 buttons=0 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=761 eventSequence=15 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=535 serverTime=177600 buttons=0 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=761 eventSequence=15 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=584 serverTime=177650 buttons=0 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=15 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=632 serverTime=177700 buttons=0 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=15 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=681 serverTime=177750 buttons=0 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=15 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=730 serverTime=177800 buttons=0 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=15 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=778 serverTime=177850 buttons=1 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=843 serverTime=177900 buttons=0 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=876 serverTime=177950 buttons=0 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=940 serverTime=178000 buttons=0 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=989 serverTime=178050 buttons=0 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1038 serverTime=178100 buttons=0 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1087 serverTime=178150 buttons=0 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1135 serverTime=178200 buttons=0 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1184 serverTime=178250 buttons=0 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1233 serverTime=178300 buttons=0 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1281 serverTime=178350 buttons=0 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1330 serverTime=178400 buttons=0 wbuttons=128 weaponstate=4 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1379 serverTime=178450 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1428 serverTime=178500 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1493 serverTime=178550 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1525 serverTime=178600 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1590 serverTime=178650 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1639 serverTime=178700 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1687 serverTime=178750 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1736 serverTime=178800 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1784 serverTime=178850 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1833 serverTime=178900 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1882 serverTime=178950 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1931 serverTime=179000 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1979 serverTime=179050 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2028 serverTime=179100 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2076 serverTime=179150 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2141 serverTime=179200 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2190 serverTime=179250 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2239 serverTime=179300 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2287 serverTime=179350 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2336 serverTime=179400 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2385 serverTime=179450 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2433 serverTime=179500 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2482 serverTime=179550 buttons=0 wbuttons=128 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+commandTime 179532
+origin[1] 1176665216
+origin[0] -974616832
+origin[2] 1134206332
+viewangles[1] 1119092736
+viewangles[0] 0
+iCompassFriendInfo 0
+eFlags 48
+bobCycle 0
+viewHeightCurrent 1109393408
+eventSequence 16
+legsAnim 111
+pm_flags 262146
+delta_angles[1] 40960
+velocity[1] 0
+velocity[0] 0
+speed 190
+mins[0] -1049624576
+mins[1] -1049624576
+maxs[0] 1097859072
+maxs[1] 1097859072
+maxs[2] 1116471296
+proneViewHeight 11
+crouchViewHeight 40
+standViewHeight 60
+deadViewHeight 8
+walkSpeedScale 1053609165
+runSpeedScale 1065353216
+proneSpeedScale 1041865114
+crouchSpeedScale 1059481190
+strafeSpeedScale 1061997773
+backSpeedScale 1060320051
+leanSpeedScale 1053609165
+friction 1065353216
+groundEntityNum 1022
+viewHeightTarget 40
+events[0] 151
+weapons[0] 134481920
+weaponslots[0] 184553984
+gravity 800
+serverCursorHintString 255
+viewmodelIndex 52
+events[1] 159
+events[2] 162
+events[3] 163
+delta_angles[0] 0
+weapon 18
+movementDir 0
+viewHeightLerpTarget 40
+weaponslots[4] 27
+proneDirection 0
+aimSpreadScale 0
+weapAnim 4
+jumpTime 0
+velocity[2] 0
+weaponTime 0
+proneTorsoPitch 0
+proneDirectionPitch 0
+fTorsoPitch 0
+fWaistPitch 0
+fTorsoHeight 0
+weaponstate 0
+torsoTimer 0
+torsoAnim 0
+eventParms[0] 0
+vLadderVec[0] 0
+eventParms[3] 0
+viewHeightLerpDown 1
+weaponDelay 0
+eventParms[1] 0
+viewHeightLerpTime 0
+eventParms[2] 0
+vLadderVec[1] 0
+fWeaponPosFrac 0
+pm_type 0
+legsTimer 0
+fJumpPeak 0
+leanf 0
+damageEvent 0
+damageYaw 0
+damagePitch 0
+damageCount 0
+weaponrechamber[0] 0
+grenadeTimeLeft 0
+pm_time 0
+iFoliageSoundTime 0
+deltaTime 0
+serverCursorHint 0
+serverCursorHintVal 0
+shellshockIndex 0
+shellshockTime 0
+shellshockDuration 0
+delta_angles[2] 0
+vLadderVec[2] 0
+clientNum 1
+weapons[1] 0
+weaponrechamber[1] 0
+viewangles[2] 0
+viewHeightLerpPosAdj 0
+mins[2] 0
+viewlocked 0
+viewlocked_entNum 0
+gunfx 0
+[step stand_between]
+!input buttons=0 wbuttons=0 up=0 forward=0 right=0 yaw=0 pulse_buttons=0 pulse_wbuttons=0 pulses=0 pulse_hold_ms=32 pulse_period_ms=378 hold_ms=1500 walks=0 wait_ready=0
+!observed fire_step=0 expected_shots=0 fired=0 shots_seen=0 seq_delta=0 waited_ready_ms=0 retried=0 snapshots=31 weaponstate=0 legsAnim=111,634 torsoAnim=0 weapAnim=4
+!trace ms=0 serverTime=179600 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=111 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=48 serverTime=179650 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=97 serverTime=179700 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=146 serverTime=179750 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=194 serverTime=179800 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=259 serverTime=179850 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=292 serverTime=179900 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=356 serverTime=179950 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=405 serverTime=180000 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=454 serverTime=180050 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=503 serverTime=180100 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=551 serverTime=180150 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=600 serverTime=180200 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=649 serverTime=180250 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=698 serverTime=180300 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=746 serverTime=180350 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=795 serverTime=180400 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=860 serverTime=180450 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=908 serverTime=180500 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=957 serverTime=180550 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1006 serverTime=180600 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1054 serverTime=180650 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1103 serverTime=180700 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1152 serverTime=180750 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1200 serverTime=180800 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1249 serverTime=180850 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1298 serverTime=180900 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1346 serverTime=180950 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1395 serverTime=181000 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1444 serverTime=181050 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1509 serverTime=181100 buttons=0 wbuttons=0 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=16 events[0]=151 events[1]=159 events[2]=162 events[3]=163
+commandTime 181098
+origin[1] 1176665216
+origin[0] -974616832
+origin[2] 1134206332
+viewangles[1] 1119092736
+viewangles[0] 0
+iCompassFriendInfo 0
+eFlags 16
+bobCycle 0
+viewHeightCurrent 1114636288
+eventSequence 16
+legsAnim 634
+pm_flags 262144
+delta_angles[1] 40960
+velocity[1] 0
+velocity[0] 0
+speed 190
+mins[0] -1049624576
+mins[1] -1049624576
+maxs[0] 1097859072
+maxs[1] 1097859072
+maxs[2] 1116471296
+proneViewHeight 11
+crouchViewHeight 40
+standViewHeight 60
+deadViewHeight 8
+walkSpeedScale 1053609165
+runSpeedScale 1065353216
+proneSpeedScale 1041865114
+crouchSpeedScale 1059481190
+strafeSpeedScale 1061997773
+backSpeedScale 1060320051
+leanSpeedScale 1053609165
+friction 1065353216
+groundEntityNum 1022
+viewHeightTarget 60
+events[0] 151
+weapons[0] 134481920
+weaponslots[0] 184553984
+gravity 800
+serverCursorHintString 255
+viewmodelIndex 52
+events[1] 159
+events[2] 162
+events[3] 163
+delta_angles[0] 0
+weapon 18
+movementDir 0
+viewHeightLerpTarget 60
+weaponslots[4] 27
+proneDirection 0
+aimSpreadScale 0
+weapAnim 4
+jumpTime 0
+velocity[2] 0
+weaponTime 0
+proneTorsoPitch 0
+proneDirectionPitch 0
+fTorsoPitch 0
+fWaistPitch 0
+fTorsoHeight 0
+weaponstate 0
+torsoTimer 0
+torsoAnim 0
+eventParms[0] 0
+vLadderVec[0] 0
+eventParms[3] 0
+viewHeightLerpDown 0
+weaponDelay 0
+eventParms[1] 0
+viewHeightLerpTime 0
+eventParms[2] 0
+vLadderVec[1] 0
+fWeaponPosFrac 0
+pm_type 0
+legsTimer 0
+fJumpPeak 0
+leanf 0
+damageEvent 0
+damageYaw 0
+damagePitch 0
+damageCount 0
+weaponrechamber[0] 0
+grenadeTimeLeft 0
+pm_time 0
+iFoliageSoundTime 0
+deltaTime 0
+serverCursorHint 0
+serverCursorHintVal 0
+shellshockIndex 0
+shellshockTime 0
+shellshockDuration 0
+delta_angles[2] 0
+vLadderVec[2] 0
+clientNum 1
+weapons[1] 0
+weaponrechamber[1] 0
+viewangles[2] 0
+viewHeightLerpPosAdj 0
+mins[2] 0
+viewlocked 0
+viewlocked_entNum 0
+gunfx 0
+[step prone_fire]
+!input buttons=0 wbuttons=64 up=-127 forward=0 right=0 yaw=0 pulse_buttons=1 pulse_wbuttons=0 pulses=3 pulse_hold_ms=32 pulse_period_ms=378 hold_ms=3000 walks=0 wait_ready=1
+!observed fire_step=1 expected_shots=3 fired=1 shots_seen=1 seq_delta=3 waited_ready_ms=502 retried=0 snapshots=61 weaponstate=0,3,4 legsAnim=634 torsoAnim=0,765 weapAnim=0,4,514,516
+!trace ms=0 serverTime=181600 buttons=1 wbuttons=64 weaponstate=0 weapAnim=4 legsAnim=634 torsoAnim=0 eventSequence=17 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=32 serverTime=181650 buttons=0 wbuttons=64 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=18 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=65 serverTime=181700 buttons=0 wbuttons=64 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=18 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=129 serverTime=181750 buttons=0 wbuttons=64 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=18 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=178 serverTime=181800 buttons=0 wbuttons=64 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=18 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=227 serverTime=181850 buttons=0 wbuttons=64 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=18 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=275 serverTime=181900 buttons=0 wbuttons=64 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=18 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=324 serverTime=181950 buttons=0 wbuttons=64 weaponstate=3 weapAnim=514 legsAnim=634 torsoAnim=765 eventSequence=18 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=373 serverTime=182000 buttons=0 wbuttons=64 weaponstate=0 weapAnim=0 legsAnim=634 torsoAnim=765 eventSequence=18 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=421 serverTime=182050 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=765 eventSequence=19 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=470 serverTime=182100 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=765 eventSequence=19 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=519 serverTime=182150 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=765 eventSequence=19 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=567 serverTime=182200 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=19 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=632 serverTime=182250 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=19 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=681 serverTime=182300 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=19 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=730 serverTime=182350 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=19 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=778 serverTime=182400 buttons=1 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=19 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=827 serverTime=182450 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=876 serverTime=182500 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=925 serverTime=182550 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=973 serverTime=182600 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1022 serverTime=182650 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1071 serverTime=182700 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1119 serverTime=182750 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1168 serverTime=182800 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1217 serverTime=182850 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1281 serverTime=182900 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1330 serverTime=182950 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1379 serverTime=183000 buttons=0 wbuttons=64 weaponstate=4 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1427 serverTime=183050 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1476 serverTime=183100 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1525 serverTime=183150 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1573 serverTime=183200 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1622 serverTime=183250 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1671 serverTime=183300 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1720 serverTime=183350 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1768 serverTime=183400 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1817 serverTime=183450 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1866 serverTime=183500 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1931 serverTime=183550 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1979 serverTime=183600 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2028 serverTime=183650 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2077 serverTime=183700 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2125 serverTime=183750 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2174 serverTime=183800 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2223 serverTime=183850 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2271 serverTime=183900 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2320 serverTime=183950 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2369 serverTime=184000 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2434 serverTime=184050 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2466 serverTime=184100 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2531 serverTime=184150 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2580 serverTime=184200 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2629 serverTime=184250 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2677 serverTime=184300 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2726 serverTime=184350 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2775 serverTime=184400 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2823 serverTime=184450 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2872 serverTime=184500 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2921 serverTime=184550 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2969 serverTime=184600 buttons=0 wbuttons=64 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+commandTime 184582
+origin[1] 1176665216
+origin[0] -974616832
+origin[2] 1134206332
+viewangles[1] 1119092736
+viewangles[0] 0
+iCompassFriendInfo 0
+eFlags 16
+bobCycle 0
+viewHeightCurrent 1114636288
+eventSequence 20
+legsAnim 634
+pm_flags 262144
+delta_angles[1] 40960
+velocity[1] 0
+velocity[0] 0
+speed 190
+mins[0] -1049624576
+mins[1] -1049624576
+maxs[0] 1097859072
+maxs[1] 1097859072
+maxs[2] 1116471296
+proneViewHeight 11
+crouchViewHeight 40
+standViewHeight 60
+deadViewHeight 8
+walkSpeedScale 1053609165
+runSpeedScale 1065353216
+proneSpeedScale 1041865114
+crouchSpeedScale 1059481190
+strafeSpeedScale 1061997773
+backSpeedScale 1060320051
+leanSpeedScale 1053609165
+friction 1065353216
+groundEntityNum 1022
+viewHeightTarget 60
+events[0] 140
+weapons[0] 134481920
+weaponslots[0] 184553984
+gravity 800
+serverCursorHintString 255
+viewmodelIndex 52
+events[1] 159
+events[2] 162
+events[3] 163
+delta_angles[0] 0
+weapon 18
+movementDir 0
+viewHeightLerpTarget 60
+weaponslots[4] 27
+proneDirection 0
+aimSpreadScale 0
+weapAnim 516
+jumpTime 0
+velocity[2] 0
+weaponTime 0
+proneTorsoPitch 0
+proneDirectionPitch 0
+fTorsoPitch 0
+fWaistPitch 0
+fTorsoHeight 0
+weaponstate 0
+torsoTimer 0
+torsoAnim 0
+eventParms[0] 0
+vLadderVec[0] 0
+eventParms[3] 0
+viewHeightLerpDown 0
+weaponDelay 0
+eventParms[1] 0
+viewHeightLerpTime 0
+eventParms[2] 0
+vLadderVec[1] 0
+fWeaponPosFrac 0
+pm_type 0
+legsTimer 0
+fJumpPeak 0
+leanf 0
+damageEvent 0
+damageYaw 0
+damagePitch 0
+damageCount 0
+weaponrechamber[0] 0
+grenadeTimeLeft 0
+pm_time 0
+iFoliageSoundTime 0
+deltaTime 0
+serverCursorHint 0
+serverCursorHintVal 0
+shellshockIndex 0
+shellshockTime 0
+shellshockDuration 0
+delta_angles[2] 0
+vLadderVec[2] 0
+clientNum 1
+weapons[1] 0
+weaponrechamber[1] 0
+viewangles[2] 0
+viewHeightLerpPosAdj 0
+mins[2] 0
+viewlocked 0
+viewlocked_entNum 0
+gunfx 0
+[step idle_after]
+!input buttons=0 wbuttons=0 up=0 forward=0 right=0 yaw=0 pulse_buttons=0 pulse_wbuttons=0 pulses=0 pulse_hold_ms=32 pulse_period_ms=378 hold_ms=3000 walks=0 wait_ready=0
+!observed fire_step=0 expected_shots=0 fired=0 shots_seen=0 seq_delta=0 waited_ready_ms=0 retried=0 snapshots=61 weaponstate=0 legsAnim=634 torsoAnim=0 weapAnim=516
+!trace ms=0 serverTime=184650 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=64 serverTime=184700 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=97 serverTime=184750 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=162 serverTime=184800 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=210 serverTime=184850 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=259 serverTime=184900 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=307 serverTime=184950 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=356 serverTime=185000 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=405 serverTime=185050 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=453 serverTime=185100 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=502 serverTime=185150 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=551 serverTime=185200 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=599 serverTime=185250 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=648 serverTime=185300 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=713 serverTime=185350 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=745 serverTime=185400 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=810 serverTime=185450 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=859 serverTime=185500 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=908 serverTime=185550 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=956 serverTime=185600 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1005 serverTime=185650 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1054 serverTime=185700 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1103 serverTime=185750 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1151 serverTime=185800 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1200 serverTime=185850 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1249 serverTime=185900 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1314 serverTime=185950 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1363 serverTime=186000 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1411 serverTime=186050 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1460 serverTime=186100 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1509 serverTime=186150 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1557 serverTime=186200 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1606 serverTime=186250 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1655 serverTime=186300 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1703 serverTime=186350 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1752 serverTime=186400 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1801 serverTime=186450 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1849 serverTime=186500 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1898 serverTime=186550 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=1963 serverTime=186600 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2012 serverTime=186650 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2061 serverTime=186700 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2109 serverTime=186750 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2158 serverTime=186800 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2206 serverTime=186850 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2255 serverTime=186900 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2304 serverTime=186950 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2352 serverTime=187000 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2401 serverTime=187050 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2450 serverTime=187100 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2498 serverTime=187150 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2547 serverTime=187200 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2612 serverTime=187250 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2661 serverTime=187300 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2709 serverTime=187350 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2758 serverTime=187400 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2807 serverTime=187450 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2855 serverTime=187500 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2904 serverTime=187550 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=2953 serverTime=187600 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+!trace ms=3002 serverTime=187650 buttons=0 wbuttons=0 weaponstate=0 weapAnim=516 legsAnim=634 torsoAnim=0 eventSequence=20 events[0]=140 events[1]=159 events[2]=162 events[3]=163
+commandTime 187632
+origin[1] 1176665216
+origin[0] -974616832
+origin[2] 1134206332
+viewangles[1] 1119092736
+viewangles[0] 0
+iCompassFriendInfo 0
+eFlags 16
+bobCycle 0
+viewHeightCurrent 1114636288
+eventSequence 20
+legsAnim 634
+pm_flags 262144
+delta_angles[1] 40960
+velocity[1] 0
+velocity[0] 0
+speed 190
+mins[0] -1049624576
+mins[1] -1049624576
+maxs[0] 1097859072
+maxs[1] 1097859072
+maxs[2] 1116471296
+proneViewHeight 11
+crouchViewHeight 40
+standViewHeight 60
+deadViewHeight 8
+walkSpeedScale 1053609165
+runSpeedScale 1065353216
+proneSpeedScale 1041865114
+crouchSpeedScale 1059481190
+strafeSpeedScale 1061997773
+backSpeedScale 1060320051
+leanSpeedScale 1053609165
+friction 1065353216
+groundEntityNum 1022
+viewHeightTarget 60
+events[0] 140
+weapons[0] 134481920
+weaponslots[0] 184553984
+gravity 800
+serverCursorHintString 255
+viewmodelIndex 52
+events[1] 159
+events[2] 162
+events[3] 163
+delta_angles[0] 0
+weapon 18
+movementDir 0
+viewHeightLerpTarget 60
+weaponslots[4] 27
+proneDirection 0
+aimSpreadScale 0
+weapAnim 516
+jumpTime 0
+velocity[2] 0
+weaponTime 0
+proneTorsoPitch 0
+proneDirectionPitch 0
+fTorsoPitch 0
+fWaistPitch 0
+fTorsoHeight 0
+weaponstate 0
+torsoTimer 0
+torsoAnim 0
+eventParms[0] 0
+vLadderVec[0] 0
+eventParms[3] 0
+viewHeightLerpDown 0
+weaponDelay 0
+eventParms[1] 0
+viewHeightLerpTime 0
+eventParms[2] 0
+vLadderVec[1] 0
+fWeaponPosFrac 0
+pm_type 0
+legsTimer 0
+fJumpPeak 0
+leanf 0
+damageEvent 0
+damageYaw 0
+damagePitch 0
+damageCount 0
+weaponrechamber[0] 0
+grenadeTimeLeft 0
+pm_time 0
+iFoliageSoundTime 0
+deltaTime 0
+serverCursorHint 0
+serverCursorHintVal 0
+shellshockIndex 0
+shellshockTime 0
+shellshockDuration 0
+delta_angles[2] 0
+vLadderVec[2] 0
+clientNum 1
+weapons[1] 0
+weaponrechamber[1] 0
+viewangles[2] 0
+viewHeightLerpPosAdj 0
+mins[2] 0
+viewlocked 0
+viewlocked_entNum 0
+gunfx 0

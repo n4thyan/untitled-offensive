@@ -1,0 +1,1034 @@
+//! The map's triggers as a host-side table, and the two-stage test the touch
+//! pass runs against them: a box query, then a contact against the trigger's
+//! own brushes. Which classnames are triggers, and what each does, is
+//! docs/superpowers/specs/2026-09-08-movers-triggers-sd-design.md section 3.
+
+use crate::game::host::GameHost;
+use glam::Vec3;
+use std::collections::BTreeMap;
+use vcod_gsc::{Atom, Cx, EntId, Host, Value};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TriggerKind {
+    Multiple,
+    Once,
+    Use,
+    LookAt,
+    Hurt,
+    /// Recognised, registered and notified, but models no damage of its own:
+    /// deliberate, and the spec's 3.6 says so.
+    Damage,
+}
+
+/// What a trigger occupies: the submodel's own box, and the model whose
+/// brushes the exact test measures against. Both are local, so the absolute
+/// shape is taken around the entity's current origin rather than cached.
+#[derive(Clone, Copy, Debug)]
+pub struct TriggerShape {
+    pub mins: [f32; 3],
+    pub maxs: [f32; 3],
+    /// Looked up in `GameHost::model_brushes`. `None` on a trigger with no
+    /// brush model, which then has only its box.
+    pub model: Option<u32>,
+}
+
+impl TriggerShape {
+    /// A box with no brushes under it, which is every shape a script builds.
+    pub fn boxed(mins: [f32; 3], maxs: [f32; 3]) -> Self {
+        Self {
+            mins,
+            maxs,
+            model: None,
+        }
+    }
+}
+
+/// One trigger.
+#[derive(Clone, Copy, Debug)]
+pub struct Trigger {
+    pub kind: TriggerKind,
+    pub shape: TriggerShape,
+    /// The refire window in milliseconds: the `wait` and `random` keys for
+    /// every kind but `Hurt`, where `register_hurt` puts the touch cadence
+    /// here instead. Both 0 means no gate.
+    pub wait_ms: i32,
+    pub random_ms: i32,
+    /// Level-clock time this may fire again.
+    pub next_fire_ms: i32,
+    /// What a touch takes off the toucher, and the damage flags it takes it
+    /// with. Both 0 on every kind but `Hurt`.
+    pub damage: i32,
+    pub dflags: i32,
+}
+
+// `EntId` orders by entity number first, and entity numbers are handed out
+// in spawn order, so `iter()` walks a map's triggers in the order they were
+// loaded in.
+#[derive(Default)]
+pub struct Triggers {
+    rows: BTreeMap<EntId, Trigger>,
+}
+
+/// The `dmg` default, the two spawnflags and the two touch intervals, all
+/// from docs/research/cod11-gsc-object-model.md 8.1.
+pub const HURT_DEFAULT_DAMAGE: i32 = 5;
+const HURT_NO_PROTECTION: i32 = 0x8;
+const HURT_SLOW: i32 = 0x10;
+const HURT_INTERVAL_MS: i32 = 100;
+const HURT_SLOW_INTERVAL_MS: i32 = 1000;
+
+/// The mod `hurt_touch` damages with (the same doc section).
+pub const MOD_TRIGGER_HURT: &str = "MOD_TRIGGER_HURT";
+
+impl Triggers {
+    pub fn register(
+        &mut self,
+        id: EntId,
+        kind: TriggerKind,
+        shape: TriggerShape,
+        wait_ms: i32,
+        random_ms: i32,
+    ) {
+        self.rows.insert(
+            id,
+            Trigger {
+                kind,
+                shape,
+                wait_ms,
+                random_ms,
+                next_fire_ms: 0,
+                damage: 0,
+                dflags: 0,
+            },
+        );
+    }
+
+    /// A `trigger_hurt`, whose damage, flags and cadence come from
+    /// `SP_trigger_hurt` (0x64ef8) and `hurt_touch` (0x64dc4) rather than from
+    /// the `wait`/`random` keys the other kinds take; the cadence rides
+    /// `wait_ms` because retail's timestamp gates its notify too
+    /// (docs/research/cod11-gsc-object-model.md 8.1).
+    ///
+    /// Not modelled, and the same section says why: `hurt_touch` tests a byte
+    /// on the *toucher* before its timestamp, so ours hurts a dead player
+    /// where retail may not.
+    pub fn register_hurt(&mut self, id: EntId, shape: TriggerShape, damage: i32, spawnflags: i32) {
+        let wait_ms = if spawnflags & HURT_SLOW == 0 {
+            HURT_INTERVAL_MS
+        } else {
+            HURT_SLOW_INTERVAL_MS
+        };
+        self.register(id, TriggerKind::Hurt, shape, wait_ms, 0);
+        if let Some(t) = self.rows.get_mut(&id) {
+            t.damage = damage;
+            t.dflags = if spawnflags & HURT_NO_PROTECTION == 0 {
+                0
+            } else {
+                crate::game::combat::DFLAG_NO_PROTECTION
+            };
+        }
+    }
+
+    pub fn remove(&mut self, id: EntId) {
+        self.rows.remove(&id);
+    }
+
+    pub fn get(&self, id: EntId) -> Option<&Trigger> {
+        self.rows.get(&id)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (EntId, &Trigger)> {
+        self.rows.iter().map(|(id, t)| (*id, t))
+    }
+
+    pub fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    /// Whether a touch fires, arming the next window from `wait_ms` and
+    /// `random_ms`. An ungated trigger (both 0) fires on every touch; a
+    /// gated one refuses until the window elapses; a `trigger_once` arms a
+    /// window that never elapses, so it fires exactly once.
+    pub fn fire(&mut self, id: EntId, now_ms: i32, rng: &mut impl FnMut(i32) -> i32) -> bool {
+        let Some(t) = self.rows.get_mut(&id) else {
+            return false;
+        };
+        if now_ms < t.next_fire_ms {
+            return false;
+        }
+        t.next_fire_ms = match t.kind {
+            // Ours latches the window shut where the spec's 3.6 says retail
+            // frees the entity. Whether it does is unmeasured, so a
+            // `getEntArray` sees a fired `trigger_once` here and may not on
+            // retail; nothing is invented until that is measured.
+            TriggerKind::Once => i32::MAX,
+            _ if t.wait_ms == 0 && t.random_ms == 0 => now_ms,
+            _ => now_ms + t.wait_ms + rng(t.random_ms),
+        };
+        true
+    }
+}
+
+pub fn kind_of(classname: &str) -> Option<TriggerKind> {
+    Some(match classname {
+        "trigger_multiple" => TriggerKind::Multiple,
+        "trigger_once" => TriggerKind::Once,
+        "trigger_use" => TriggerKind::Use,
+        "trigger_lookat" => TriggerKind::LookAt,
+        "trigger_hurt" => TriggerKind::Hurt,
+        "trigger_damage" => TriggerKind::Damage,
+        _ => return None,
+    })
+}
+
+/// A box offset to an origin: the shape `abs_bounds` and the point/player
+/// cases share.
+fn offset_bounds(origin: [f32; 3], mins: [f32; 3], maxs: [f32; 3]) -> ([f32; 3], [f32; 3]) {
+    let lo = [
+        origin[0] + mins[0],
+        origin[1] + mins[1],
+        origin[2] + mins[2],
+    ];
+    let hi = [
+        origin[0] + maxs[0],
+        origin[1] + maxs[1],
+        origin[2] + maxs[2],
+    ];
+    (lo, hi)
+}
+
+pub fn abs_bounds(origin: [f32; 3], t: &Trigger) -> ([f32; 3], [f32; 3]) {
+    offset_bounds(origin, t.shape.mins, t.shape.maxs)
+}
+
+/// The player's own clip box, which is what a touch's exact
+/// `trap_EntityContact` test measures against and not what the broad phase
+/// queries (docs/research/cod11-gsc-object-model.md section 22). Half-width 15
+/// and 0..72 standing, from the movement constants table in
+/// docs/research/cod11-mantle.md.
+pub const PLAYER_MINS: [f32; 3] = [-15.0, -15.0, 0.0];
+pub const PLAYER_MAXS: [f32; 3] = [15.0, 15.0, 72.0];
+
+/// `origin` is taken as an already-interned atom rather than folded here:
+/// the touch pass calls this once per client plus once per trigger row per
+/// cmd, and folding lowercases and allocates every time.
+fn entity_origin(host: &mut GameHost, cx: &mut Cx, id: EntId, origin: Atom) -> [f32; 3] {
+    match host.get_field(cx, id, origin) {
+        Value::Vector(v) => v,
+        _ => [0.0; 3],
+    }
+}
+
+/// An entity's absolute box: a registered trigger's submodel box around its
+/// current origin, a client's player box, and a point box for everything
+/// else, which is what an unset `r.mins`/`r.maxs` gives retail.
+pub fn entity_abs_bounds(host: &mut GameHost, cx: &mut Cx, id: EntId) -> ([f32; 3], [f32; 3]) {
+    let origin = cx.intern_folded("origin");
+    abs_bounds_with_atom(host, cx, id, origin)
+}
+
+fn abs_bounds_with_atom(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    id: EntId,
+    origin_atom: Atom,
+) -> ([f32; 3], [f32; 3]) {
+    let origin = entity_origin(host, cx, id, origin_atom);
+    if let Some(t) = host.triggers.get(id) {
+        return abs_bounds(origin, t);
+    }
+    let is_client = host.ents.get(id).is_some_and(|e| e.client.is_some());
+    let (mins, maxs) = if is_client {
+        (PLAYER_MINS, PLAYER_MAXS)
+    } else {
+        ([0.0; 3], [0.0; 3])
+    };
+    offset_bounds(origin, mins, maxs)
+}
+
+/// The candidate box retail hands `trap_EntitiesInBox`, taken around the
+/// client's origin rather than around its clip box
+/// (docs/research/cod11-gsc-object-model.md section 22).
+pub(crate) const TOUCH_BOX: [f32; 3] = [40.0, 40.0, 52.0];
+
+/// One submodel brush as clip planes, model-local the way `Trigger::mins` is:
+/// the entity's current origin is applied at test time, so a relocated
+/// trigger takes its brushes with it. Point p is inside iff n·p <= d for
+/// every plane.
+pub struct BrushHull {
+    pub planes: Vec<(Vec3, f32)>,
+}
+
+/// Every lump-27 submodel's brushes as clip planes, indexed by model number,
+/// for the exact stage of the touch pass. Model 0 is the world and is left
+/// empty: no trigger uses it and its brushes are the map's whole solid
+/// geometry.
+///
+/// Trigger brushes are not in `CollisionWorld` -- it drops them on purpose,
+/// since retail leaves a trigger hollow to movement -- so they are decoded
+/// straight off the lump here, through the same side decode the clip uses.
+pub fn model_brush_hulls(bsp: &vcod_common::bsp::Bsp) -> Vec<Vec<BrushHull>> {
+    bsp.models
+        .iter()
+        .enumerate()
+        .map(|(mi, model)| {
+            if mi == 0 {
+                return Vec::new();
+            }
+            let range =
+                model.first_brush as usize..(model.first_brush + model.num_brushes) as usize;
+            bsp.brushes[range]
+                .iter()
+                .map(|b| {
+                    let mut planes = Vec::new();
+                    vcod_common::collision::brush_side_planes(bsp, b, Vec3::ZERO, &mut planes);
+                    BrushHull { planes }
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Does an absolute box touch any of a model's brushes, the model sitting at
+/// `origin`? Q3's separating-plane test, which is what a contact test reduces
+/// to for an AABB: the box clears a brush only if some plane separates it, so
+/// a brush with no separating plane is in contact.
+fn box_contacts_hulls(centre: Vec3, half: Vec3, origin: Vec3, hulls: &[BrushHull]) -> bool {
+    let c = centre - origin;
+    hulls.iter().any(|b| {
+        b.planes.iter().all(|&(n, d)| {
+            let r = n.x.abs() * half.x + n.y.abs() * half.y + n.z.abs() * half.z;
+            n.dot(c) - r <= d
+        })
+    })
+}
+
+/// Every trigger this client touches, ascending entity number: the
+/// `trap_EntitiesInBox` broad phase around the origin, then the exact
+/// `trap_EntityContact` test of the client's own clip box against the
+/// trigger's *brushes* (docs/research/cod11-gsc-object-model.md section 22).
+/// Neither box contains the other -- the candidate reaches 52 below the feet
+/// and the clip box 72 above them -- so both have to hold, and the box
+/// overlap is only the cheap reject in front of the plane loop.
+///
+/// A trigger whose model has no brushes decoded (script-registered, or a map
+/// loaded without a BSP) keeps the box as its exact test.
+pub fn touched(host: &mut GameHost, cx: &mut Cx, client: EntId) -> Vec<EntId> {
+    let origin_atom = cx.intern_folded("origin");
+    let origin = entity_origin(host, cx, client, origin_atom);
+    let candidate = offset_bounds(
+        origin,
+        [-TOUCH_BOX[0], -TOUCH_BOX[1], -TOUCH_BOX[2]],
+        TOUCH_BOX,
+    );
+    let exact = abs_bounds_with_atom(host, cx, client, origin_atom);
+    let lo = Vec3::from_array(exact.0);
+    let hi = Vec3::from_array(exact.1);
+    let centre = (lo + hi) * 0.5;
+    let half = (hi - lo) * 0.5;
+    let ids: Vec<EntId> = host.triggers.iter().map(|(id, _)| id).collect();
+    ids.into_iter()
+        .filter(|id| {
+            let Some(t) = host.triggers.get(*id).copied() else {
+                return false;
+            };
+            // A `trigger_lookat`'s contents bit is not in the mask retail's
+            // broad phase queries with, so no touch ever returns one
+            // (docs/research/cod11-gsc-object-model.md 22.1).
+            if t.kind == TriggerKind::LookAt {
+                return false;
+            }
+            let t_origin = entity_origin(host, cx, *id, origin_atom);
+            let b = abs_bounds(t_origin, &t);
+            if !(boxes_overlap(candidate, b) && boxes_overlap(exact, b)) {
+                return false;
+            }
+            match t
+                .shape
+                .model
+                .and_then(|m| host.model_brushes.get(m as usize))
+            {
+                Some(hulls) if !hulls.is_empty() => {
+                    box_contacts_hulls(centre, half, Vec3::from_array(t_origin), hulls)
+                }
+                _ => true,
+            }
+        })
+        .collect()
+}
+
+/// How far the aim ray reaches: muzzle plus forward times 8192
+/// (docs/research/cod11-gsc-object-model.md 23.1).
+pub const AIM_TRACE_RANGE: f32 = 8192.0;
+
+/// The fraction along `start..end` at which the segment first enters any of
+/// a model's hulls, the model sitting at `origin`; `None` when it enters
+/// none. A start already inside a hull enters it at 0.
+pub fn segment_enters_hulls(
+    start: Vec3,
+    end: Vec3,
+    origin: Vec3,
+    hulls: &[BrushHull],
+) -> Option<f32> {
+    let s = start - origin;
+    let d = end - start;
+    hulls
+        .iter()
+        .filter(|b| !b.planes.is_empty())
+        .filter_map(|b| {
+            let (mut t_enter, mut t_exit) = (0.0f32, 1.0f32);
+            for &(n, dist) in &b.planes {
+                let s_dist = n.dot(s) - dist;
+                let rate = n.dot(d);
+                if rate.abs() < 1e-6 {
+                    if s_dist > 0.0 {
+                        return None;
+                    }
+                    continue;
+                }
+                let t = -s_dist / rate;
+                if rate > 0.0 {
+                    t_exit = t_exit.min(t);
+                } else {
+                    t_enter = t_enter.max(t);
+                }
+                if t_enter > t_exit {
+                    return None;
+                }
+            }
+            Some(t_enter)
+        })
+        .min_by(|a, b| a.total_cmp(b))
+}
+
+/// The lookat trigger the client's aim ray enters first, if nothing
+/// `G_CheckForPreventFriendlyFire`'s two traces meet stops it sooner: the
+/// world, and any live body but the aimer's own (`pass`), posed at `now_ms`
+/// and ranked through `riflePriorityMap` when `rifle`
+/// (docs/research/cod11-gsc-object-model.md 23.1). `aim` is `[pitch, yaw]`
+/// in wire degrees, the pair `ClientSim::aim_angles` returns. A lookat with
+/// brushes is entered through them, one without through its box. The bodies
+/// are `GameHost::client_bodies`.
+///
+/// Not modelled: script models (0x2080, which the second mask's 0x2000
+/// meets). Also unmeasured: retail's traces end on whatever entity they hit
+/// first, so an intervening non-lookat trigger brush may stop it on the
+/// wrong classname; ours skips every other kind and reaches the lookat
+/// behind it.
+pub fn aim_trace(
+    host: &mut GameHost,
+    cx: &mut Cx,
+    pass: usize,
+    eye: [f32; 3],
+    aim: [f32; 2],
+    rifle: bool,
+    now_ms: i32,
+) -> Option<EntId> {
+    // `CalcMuzzlePoints` truncates the muzzle point toward zero (23.1).
+    let start = Vec3::from(eye).trunc();
+    let (yaw, pitch) = crate::game::combat::aim_radians(aim);
+    let forward = Vec3::new(
+        pitch.cos() * yaw.cos(),
+        pitch.cos() * yaw.sin(),
+        pitch.sin(),
+    );
+    let end = start + forward * AIM_TRACE_RANGE;
+    // The second trace's mask less the lookat bit and BODY, which no brush
+    // carries; it holds every world bit the first one does.
+    let world_f = host.world.as_ref().map_or(1.0, |w| {
+        w.collision
+            .point_trace(start, end, AIM_WORLD_MASK, true)
+            .fraction
+    });
+    let rows: Vec<(EntId, Trigger)> = host
+        .triggers
+        .iter()
+        .filter(|(_, t)| t.kind == TriggerKind::LookAt)
+        .map(|(id, t)| (id, *t))
+        .collect();
+    let origin_atom = cx.intern_folded("origin");
+    let mut best: Option<(f32, EntId)> = None;
+    for (id, t) in rows {
+        let origin = entity_origin(host, cx, id, origin_atom);
+        let f = match t
+            .shape
+            .model
+            .and_then(|m| host.model_brushes.get(m as usize))
+        {
+            Some(hulls) if !hulls.is_empty() => {
+                segment_enters_hulls(start, end, Vec3::from(origin), hulls)
+            }
+            _ => {
+                let (lo, hi) = abs_bounds(origin, &t);
+                crate::game::combat::ray_box(start, end, lo.into(), hi.into())
+            }
+        };
+        if let Some(f) = f {
+            if f < world_f && best.is_none_or(|(b, _)| f < b) {
+                best = Some((f, id));
+            }
+        }
+    }
+    let (lookat_f, id) = best?;
+    let bodies: Vec<_> = host.client_bodies.iter().flatten().cloned().collect();
+    let (fs, anims) = (host.fs.clone(), host.anims.clone());
+    let mut bones = match (fs.as_deref(), anims.as_deref()) {
+        (Some(fs), Some(anims)) => Some(crate::game::combat::BoneTraceCtx {
+            fs,
+            anims,
+            rigs: &mut host.hit_rigs,
+            now_ms,
+        }),
+        _ => None,
+    };
+    let priority = if rifle {
+        &crate::game::combat::RIFLE_PRIORITY
+    } else {
+        &crate::game::combat::BULLET_PRIORITY
+    };
+    let body = crate::game::combat::trace_bodies(
+        start,
+        end,
+        pass,
+        &bodies,
+        lookat_f,
+        priority,
+        bones.as_mut(),
+    );
+    match body {
+        Some((_, f, _)) if f < lookat_f => None,
+        _ => Some(id),
+    }
+}
+
+/// `G_CheckForPreventFriendlyFire`'s second mask, 0x22802001, with the
+/// `trigger_lookat` bit (0x20000000) and BODY taken out: the world half of it.
+const AIM_WORLD_MASK: u32 = 0x0080_2001;
+
+/// Do two absolute boxes overlap, the test `trap_EntitiesInBox` performs.
+pub fn boxes_overlap(a: ([f32; 3], [f32; 3]), b: ([f32; 3], [f32; 3])) -> bool {
+    (0..3).all(|i| a.0[i] <= b.1[i] && a.1[i] >= b.0[i])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The six trigger classnames in the `spawns` table map to kinds; nothing
+    /// else does (docs/research/cod11-gsc-object-model.md section 8).
+    #[test]
+    fn the_spawns_tables_trigger_classnames_map_to_kinds() {
+        assert_eq!(kind_of("trigger_multiple"), Some(TriggerKind::Multiple));
+        assert_eq!(kind_of("trigger_once"), Some(TriggerKind::Once));
+        assert_eq!(kind_of("trigger_use"), Some(TriggerKind::Use));
+        assert_eq!(kind_of("trigger_lookat"), Some(TriggerKind::LookAt));
+        assert_eq!(kind_of("trigger_hurt"), Some(TriggerKind::Hurt));
+        assert_eq!(kind_of("trigger_damage"), Some(TriggerKind::Damage));
+        assert_eq!(kind_of("script_brushmodel"), None);
+        assert_eq!(kind_of("misc_mg42"), None);
+    }
+
+    /// Bounds are the submodel's, taken around the entity's *current* origin:
+    /// `sd.gsc` relocates its defuse trigger with `bombtrigger.origin =
+    /// level.bombmodel.origin`, so a cached absolute box would be wrong from
+    /// the plant onward.
+    #[test]
+    fn abs_bounds_follow_the_origin() {
+        let t = Trigger {
+            kind: TriggerKind::Multiple,
+            shape: TriggerShape::boxed([-16.0, -16.0, 0.0], [16.0, 16.0, 72.0]),
+            wait_ms: 0,
+            random_ms: 0,
+            next_fire_ms: 0,
+            damage: 0,
+            dflags: 0,
+        };
+        assert_eq!(
+            abs_bounds([100.0, -50.0, 8.0], &t),
+            ([84.0, -66.0, 8.0], [116.0, -34.0, 80.0])
+        );
+    }
+
+    /// A registered trigger is found by id and a removed one is gone: the
+    /// plant deletes both bombzones and a stale row would keep firing.
+    #[test]
+    fn register_and_remove() {
+        let mut ts = Triggers::default();
+        let id = EntId(72, 0);
+        assert!(ts.is_empty());
+        ts.register(
+            id,
+            TriggerKind::Hurt,
+            TriggerShape::boxed([-8.0; 3], [8.0; 3]),
+            0,
+            0,
+        );
+        assert_eq!(ts.len(), 1);
+        assert_eq!(ts.get(id).map(|t| t.kind), Some(TriggerKind::Hurt));
+        ts.remove(id);
+        assert!(ts.get(id).is_none());
+        assert!(ts.is_empty());
+    }
+
+    /// A trigger has to clear both boxes: one 65 units up is inside the
+    /// client's clip box and outside the candidate box, one 30 down is the
+    /// other way round, and retail touches neither.
+    #[test]
+    fn a_touch_needs_both_the_candidate_box_and_the_clip_box() {
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        vm.with_cx(|cx| {
+            let player = host.ents.spawn_client(cx, 0, None).unwrap();
+            let origin = cx.intern_folded("origin");
+            let place = |host: &mut GameHost, cx: &mut Cx, z: f32| {
+                let id = host.ents.spawn(cx).unwrap();
+                host.set_field(cx, id, origin, Value::Vector([0.0, 0.0, z]))
+                    .unwrap();
+                host.triggers.register(
+                    id,
+                    TriggerKind::Multiple,
+                    TriggerShape::boxed([-8.0; 3], [8.0; 3]),
+                    0,
+                    0,
+                );
+                id
+            };
+            let at_feet = place(&mut host, cx, 4.0);
+            place(&mut host, cx, 65.0);
+            place(&mut host, cx, -30.0);
+            assert_eq!(touched(&mut host, cx, player), vec![at_feet]);
+        });
+    }
+
+    /// A `trigger_lookat` sharing a box with a `trigger_multiple` is not
+    /// touched: retail's broad-phase contents mask has its bit clear
+    /// (docs/research/cod11-gsc-object-model.md 22.1).
+    #[test]
+    fn a_lookat_trigger_is_not_touched_where_a_multiple_is() {
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        vm.with_cx(|cx| {
+            let player = host.ents.spawn_client(cx, 0, None).unwrap();
+            let origin = cx.intern_folded("origin");
+            let place = |host: &mut GameHost, cx: &mut Cx, kind| {
+                let id = host.ents.spawn(cx).unwrap();
+                host.set_field(cx, id, origin, Value::Vector([0.0, 0.0, 4.0]))
+                    .unwrap();
+                host.triggers
+                    .register(id, kind, TriggerShape::boxed([-8.0; 3], [8.0; 3]), 0, 0);
+                id
+            };
+            let multiple = place(&mut host, cx, TriggerKind::Multiple);
+            place(&mut host, cx, TriggerKind::LookAt);
+            assert_eq!(touched(&mut host, cx, player), vec![multiple]);
+        });
+    }
+
+    /// `wait` gates a `trigger_multiple`: the first touch fires, touches
+    /// inside the window do not, and the one after it does. `random` widens
+    /// the window by up to its own value.
+    #[test]
+    fn wait_gates_a_multiple_and_random_widens_it() {
+        let mut ts = Triggers::default();
+        let id = EntId(72, 0);
+        ts.register(
+            id,
+            TriggerKind::Multiple,
+            TriggerShape::boxed([-8.0; 3], [8.0; 3]),
+            500,
+            0,
+        );
+        let mut zero = |_: i32| 0;
+        assert!(ts.fire(id, 1000, &mut zero), "first touch fires");
+        assert!(!ts.fire(id, 1400, &mut zero), "inside the 500 ms window");
+        assert!(ts.fire(id, 1500, &mut zero), "the window has passed");
+
+        let mut half = |n: i32| n / 2;
+        ts.register(
+            id,
+            TriggerKind::Multiple,
+            TriggerShape::boxed([-8.0; 3], [8.0; 3]),
+            500,
+            400,
+        );
+        assert!(ts.fire(id, 0, &mut half));
+        assert!(!ts.fire(id, 690, &mut half), "500 + 400/2 is 700");
+        assert!(ts.fire(id, 700, &mut half));
+    }
+
+    /// The two spellings of the hurt mod agree. `MOD_TRIGGER_HURT` is the
+    /// string `deliver_world_hit` passes and `MOD_NAMES[23]` is what
+    /// `mod_index` looks it up in; a drift between them makes every
+    /// `trigger_hurt` death an unnamed mod.
+    #[test]
+    fn the_hurt_mod_name_matches_the_means_of_death_table() {
+        assert_eq!(crate::game::combat::MOD_NAMES[23], MOD_TRIGGER_HURT);
+    }
+
+    /// A `trigger_once` fires once and then never again, however long the
+    /// toucher stands in it.
+    #[test]
+    fn a_once_trigger_fires_once() {
+        let mut ts = Triggers::default();
+        let id = EntId(73, 0);
+        ts.register(
+            id,
+            TriggerKind::Once,
+            TriggerShape::boxed([-8.0; 3], [8.0; 3]),
+            0,
+            0,
+        );
+        let mut zero = |_: i32| 0;
+        assert!(ts.fire(id, 0, &mut zero));
+        assert!(!ts.fire(id, 1, &mut zero));
+        assert!(!ts.fire(id, 100_000, &mut zero));
+    }
+
+    /// With neither key set, every touch fires: that is what a bombzone does,
+    /// and `bombzone_think` relies on being notified every pass while the
+    /// player stands in it.
+    #[test]
+    fn no_wait_key_fires_every_touch() {
+        let mut ts = Triggers::default();
+        let id = EntId(74, 0);
+        ts.register(
+            id,
+            TriggerKind::Multiple,
+            TriggerShape::boxed([-8.0; 3], [8.0; 3]),
+            0,
+            0,
+        );
+        let mut zero = |_: i32| 0;
+        for t in [0, 50, 100, 150] {
+            assert!(ts.fire(id, t, &mut zero), "touch at {t}");
+        }
+    }
+
+    /// A trigger's own box for the test to register, with its model's
+    /// brushes under it.
+    fn place_wedge(host: &mut GameHost, cx: &mut Cx) -> EntId {
+        // A 256 x 256 x 128 brush cut by `x + y <= 256`: the half of its
+        // bounding box past that diagonal holds no brush at all, which is the
+        // shape of mp_pavlov's minefield wedges and where the reported death
+        // happened.
+        let diagonal = Vec3::new(1.0, 1.0, 0.0).normalize();
+        host.model_bounds = vec![
+            ([0.0; 3], [0.0; 3]),
+            ([0.0, 0.0, 0.0], [256.0, 256.0, 128.0]),
+        ];
+        host.model_brushes = vec![
+            Vec::new(),
+            vec![BrushHull {
+                planes: vec![
+                    (-Vec3::X, 0.0),
+                    (Vec3::X, 256.0),
+                    (-Vec3::Y, 0.0),
+                    (Vec3::Y, 256.0),
+                    (-Vec3::Z, 0.0),
+                    (Vec3::Z, 128.0),
+                    (diagonal, 256.0 / 2.0_f32.sqrt()),
+                ],
+            }],
+        ];
+        let origin = cx.intern_folded("origin");
+        let zone = host.ents.spawn(cx).unwrap();
+        host.set_field(cx, zone, origin, Value::Vector([0.0; 3]))
+            .unwrap();
+        host.triggers.register(
+            zone,
+            TriggerKind::Multiple,
+            TriggerShape {
+                mins: [0.0, 0.0, 0.0],
+                maxs: [256.0, 256.0, 128.0],
+                model: Some(1),
+            },
+            0,
+            0,
+        );
+        zone
+    }
+
+    /// The exact stage is a brush contact, not a bounds overlap: a player
+    /// standing in the bulge of a wedge's bounding box touches nothing, and
+    /// one inside the brush touches it. That difference is a minefield
+    /// killing a player meters clear of the mines
+    /// (docs/research/cod11-gsc-object-model.md section 22).
+    #[test]
+    fn a_wedge_is_touched_by_its_brush_and_not_by_the_bulge_of_its_box() {
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        vm.with_cx(|cx| {
+            let zone = place_wedge(&mut host, cx);
+            let player = host.ents.spawn_client(cx, 0, None).unwrap();
+            let origin = cx.intern_folded("origin");
+            let at = |host: &mut GameHost, cx: &mut Cx, p: [f32; 3]| {
+                host.set_field(cx, player, origin, Value::Vector(p))
+                    .unwrap();
+                touched(host, cx, player)
+            };
+            assert_eq!(
+                at(&mut host, cx, [60.0, 60.0, 4.0]),
+                vec![zone],
+                "inside the brush"
+            );
+            assert!(
+                at(&mut host, cx, [200.0, 200.0, 4.0]).is_empty(),
+                "inside the bounding box, 70-odd units clear of the brush"
+            );
+        });
+    }
+
+    /// The same asymmetry against real geometry: one of mp_pavlov's shaped
+    /// `minefield` submodels, whose bounding box reaches well past its
+    /// brushes. Needs `COD_DIR`; without the paks it returns early.
+    #[test]
+    fn a_shaped_minefield_model_on_mp_pavlov_leaves_its_bounding_box_hollow() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        let bytes = fs
+            .read("maps/mp/mp_pavlov.bsp")
+            .expect("mp_pavlov in the paks");
+        let bsp = vcod_common::bsp::parse(&bytes).expect("parse mp_pavlov");
+        let hulls = model_brush_hulls(&bsp);
+
+        // `*25` is one of the 19 minefield brushes carrying angled planes.
+        const MODEL: usize = 25;
+        assert!(
+            hulls[MODEL].iter().any(|b| b.planes.len() > 6),
+            "model *{MODEL} is a plain box; pick another shaped one"
+        );
+        let (mins, maxs) = (bsp.models[MODEL].mins, bsp.models[MODEL].maxs);
+
+        // Two stations sampled over the model's own box at its floor: one
+        // whose clip box meets a brush and one whose clip box meets only the
+        // box. The second existing at all is the bug.
+        let half = Vec3::new(15.0, 15.0, 36.0);
+        let mut inside = None;
+        let mut bulge = None;
+        for ix in 0..=32 {
+            for iy in 0..=32 {
+                let p = [
+                    mins[0] + (maxs[0] - mins[0]) * ix as f32 / 32.0,
+                    mins[1] + (maxs[1] - mins[1]) * iy as f32 / 32.0,
+                    mins[2],
+                ];
+                let centre = Vec3::new(p[0], p[1], p[2] + 36.0);
+                let clip = offset_bounds(p, PLAYER_MINS, PLAYER_MAXS);
+                if !boxes_overlap(clip, (mins, maxs)) {
+                    continue;
+                }
+                if box_contacts_hulls(centre, half, Vec3::ZERO, &hulls[MODEL]) {
+                    inside.get_or_insert(p);
+                } else {
+                    bulge.get_or_insert(p);
+                }
+            }
+        }
+        let inside = inside.expect("a station inside the minefield's brushes");
+        let bulge = bulge.expect("a station in its bounding box but in none of its brushes");
+
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        host.model_bounds = bsp.models.iter().map(|m| (m.mins, m.maxs)).collect();
+        host.model_brushes = hulls;
+        vm.with_cx(|cx| {
+            let origin = cx.intern_folded("origin");
+            let zone = host.ents.spawn(cx).unwrap();
+            host.set_field(cx, zone, origin, Value::Vector([0.0; 3]))
+                .unwrap();
+            host.triggers.register(
+                zone,
+                TriggerKind::Hurt,
+                TriggerShape {
+                    mins,
+                    maxs,
+                    model: Some(MODEL as u32),
+                },
+                0,
+                0,
+            );
+            let player = host.ents.spawn_client(cx, 0, None).unwrap();
+            let at = |host: &mut GameHost, cx: &mut Cx, p: [f32; 3]| {
+                host.set_field(cx, player, origin, Value::Vector(p))
+                    .unwrap();
+                touched(host, cx, player)
+            };
+            assert_eq!(at(&mut host, cx, inside), vec![zone], "at {inside:?}");
+            assert!(
+                at(&mut host, cx, bulge).is_empty(),
+                "at {bulge:?}, which is in the box and in no brush"
+            );
+        });
+    }
+
+    /// A segment through a hull enters it at the near face, and one that
+    /// passes beside it enters nothing.
+    #[test]
+    fn a_lookat_hull_on_the_ray_is_found_and_a_box_beside_it_is_not() {
+        let hull = BrushHull {
+            planes: vec![
+                (Vec3::X, 16.0),
+                (-Vec3::X, 16.0),
+                (Vec3::Y, 16.0),
+                (-Vec3::Y, 16.0),
+                (Vec3::Z, 16.0),
+                (-Vec3::Z, 16.0),
+            ],
+        };
+        let o = Vec3::new(200.0, 0.0, 0.0);
+        let f = segment_enters_hulls(
+            Vec3::ZERO,
+            Vec3::new(400.0, 0.0, 0.0),
+            o,
+            std::slice::from_ref(&hull),
+        )
+        .unwrap();
+        assert!((f - 184.0 / 400.0).abs() < 1e-4);
+        assert!(segment_enters_hulls(
+            Vec3::ZERO,
+            Vec3::new(400.0, 40.0, 0.0),
+            o,
+            std::slice::from_ref(&hull)
+        )
+        .is_none());
+        // A start inside the hull enters it at 0.
+        let inside = segment_enters_hulls(
+            Vec3::new(200.0, 0.0, 0.0),
+            Vec3::new(400.0, 0.0, 0.0),
+            o,
+            std::slice::from_ref(&hull),
+        );
+        assert_eq!(inside, Some(0.0));
+        // A hull with no planes is nothing, not everything.
+        let empty = BrushHull { planes: Vec::new() };
+        assert!(segment_enters_hulls(
+            Vec3::ZERO,
+            Vec3::new(400.0, 40.0, 0.0),
+            o,
+            std::slice::from_ref(&empty)
+        )
+        .is_none());
+    }
+
+    /// The aim trace answers the nearest `trigger_lookat` on the ray and
+    /// nothing else: a `trigger_multiple` in front of it is not a lookat,
+    /// and a lookat further down the ray loses to the nearer one
+    /// (docs/research/cod11-gsc-object-model.md 23.1).
+    #[test]
+    fn the_aim_trace_returns_the_nearest_lookat_and_skips_other_kinds() {
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        vm.with_cx(|cx| {
+            let origin = cx.intern_folded("origin");
+            let place_at = |host: &mut GameHost, cx: &mut Cx, kind, at: [f32; 3]| {
+                let id = host.ents.spawn(cx).unwrap();
+                host.set_field(cx, id, origin, Value::Vector(at)).unwrap();
+                host.triggers.register(
+                    id,
+                    kind,
+                    TriggerShape::boxed([-20.0, -20.0, 0.0], [20.0, 20.0, 80.0]),
+                    0,
+                    0,
+                );
+                id
+            };
+            let near = place_at(&mut host, cx, TriggerKind::Multiple, [100.0, 0.0, 0.0]);
+            let far = place_at(&mut host, cx, TriggerKind::LookAt, [300.0, 0.0, 0.0]);
+            let farther = place_at(&mut host, cx, TriggerKind::LookAt, [500.0, 0.0, 0.0]);
+            let hit = aim_trace(&mut host, cx, 0, [0.0, 0.0, 60.0], [0.0, 0.0], false, 0);
+            assert_eq!(hit, Some(far));
+            let miss = aim_trace(&mut host, cx, 0, [0.0, 0.0, 60.0], [0.0, 90.0], false, 0);
+            assert_eq!(miss, None);
+            let _ = (near, farther);
+        });
+    }
+
+    /// A world brush between the eye and a lookat stops the aim trace short
+    /// of it; the same trace with the brush gone reaches it.
+    #[test]
+    fn a_world_brush_between_eye_and_lookat_blocks_the_aim_trace() {
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        let world = |extra: &[(Vec3, Vec3)]| {
+            Some(std::rc::Rc::new(crate::world::World {
+                collision: vcod_common::collision::test_world(extra),
+                vis: vcod_common::bsp::Visibility::none(),
+                spawn: ([0.0; 3], 0.0),
+            }))
+        };
+        vm.with_cx(|cx| {
+            let origin = cx.intern_folded("origin");
+            let id = host.ents.spawn(cx).unwrap();
+            host.set_field(cx, id, origin, Value::Vector([300.0, 0.0, 0.0]))
+                .unwrap();
+            host.triggers.register(
+                id,
+                TriggerKind::LookAt,
+                TriggerShape::boxed([-20.0, -20.0, 0.0], [20.0, 20.0, 80.0]),
+                0,
+                0,
+            );
+            host.world = world(&[]);
+            assert_eq!(
+                aim_trace(&mut host, cx, 0, [0.0, 0.0, 60.0], [0.0, 0.0], false, 0),
+                Some(id)
+            );
+            host.world = world(&[(Vec3::new(150.0, -64.0, 0.0), Vec3::new(160.0, 64.0, 128.0))]);
+            assert_eq!(
+                aim_trace(&mut host, cx, 0, [0.0, 0.0, 60.0], [0.0, 0.0], false, 0),
+                None
+            );
+        });
+    }
+
+    /// A lookat with brushes under it is entered through the brushes, not
+    /// its box: the wedge's bulge is hollow to the aim the way it is to a
+    /// touch.
+    #[test]
+    fn the_aim_trace_enters_a_lookat_through_its_brushes() {
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        vm.with_cx(|cx| {
+            let zone = place_wedge(&mut host, cx);
+            if let Some(t) = host.triggers.rows.get_mut(&zone) {
+                t.kind = TriggerKind::LookAt;
+            }
+            // Straight down into the brush half, and straight down into the
+            // bulge past the diagonal.
+            assert_eq!(
+                aim_trace(&mut host, cx, 0, [60.0, 60.0, 200.0], [90.0, 0.0], false, 0),
+                Some(zone)
+            );
+            assert_eq!(
+                aim_trace(
+                    &mut host,
+                    cx,
+                    0,
+                    [200.0, 200.0, 200.0],
+                    [90.0, 0.0],
+                    false,
+                    0
+                ),
+                None
+            );
+        });
+    }
+
+    /// `delete()` takes the row with the entity. `sd.gsc` deletes both
+    /// bombzones the instant a plant completes.
+    #[test]
+    fn freeing_an_entity_drops_its_trigger_row() {
+        let (mut vm, mut host) = crate::game::testing::fixture();
+        vm.with_cx(|cx| {
+            let id = host.ents.spawn(cx).unwrap();
+            host.triggers.register(
+                id,
+                TriggerKind::Multiple,
+                TriggerShape::boxed([-8.0; 3], [8.0; 3]),
+                0,
+                0,
+            );
+            host.free_entity(id);
+            assert!(host.triggers.get(id).is_none());
+            assert!(host.ents.get(id).is_none());
+        });
+    }
+}

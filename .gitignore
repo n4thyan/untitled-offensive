@@ -1,0 +1,54 @@
+/target
+/tmp/
+/private/
+/docs/design/
+/docs/superpowers/
+/.claude/
+/.superpowers/
+/.serena/
+/.aider*
+/CLAUDE.local.md
+__pycache__/
+*.pyc
+*.log
+.idea/
+.vscode/
+.zed/
+*.swp
+.DS_Store
+*.orig
+*.rej
+perf.data*
+flamegraph.svg
+
+# ---- PROPRIETARY GAME DATA: never commit ----
+# Local development logs from a session against the retail install.
+/dev-logs/
+/logs/
+# Local retail installs (Call of Duty 2003, Wolfenstein ET, United Offensive) are
+# read-only references and MUST NOT enter git history.
+/game-data/
+/cod-install/
+/et-install/
+/uo-install/
+/assets/proprietary/
+/assets/extracted/
+/compat/extracted/
+/cache/
+*.pk3
+*.pk4
+*.iwd
+*.bsp
+*.xmodel
+*.xanim
+*.xmodelparts
+*.xmodelsurfs
+*.sound
+*.atlas
+*.gsc
+*.tga
+*.dds
+*.wav
+*.mp3
+*.ogg
+*.pc
