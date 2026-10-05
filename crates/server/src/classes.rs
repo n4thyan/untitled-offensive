@@ -237,10 +237,32 @@ impl Classes {
         true
     }
 
-    /// The class a client named `name` should spawn with, resolved. `None`
-    /// when the profile has no playable class at all (then the stock script
-    /// loadout stands).
-    pub fn loadout_for(&self, name: &str, weapons: &WeaponTable) -> Option<Loadout> {
+    /// The class a client named `name` spawns with, resolved against
+    /// `weapons`. `None` when the profile has no playable class, in which case
+    /// the stock script loadout stands.
+    ///
+    /// `chosen` is the weapon the gametype's `spawnPlayer` just gave the
+    /// player, from the stock weapon menu. A name with a profile of its own
+    /// always wins — that is the point of Create-a-Class. A name with *no*
+    /// profile gets the built-in default **only** when it has not already
+    /// chosen a weapon for itself, because applying the default
+    /// unconditionally overrode the weapon a player had just picked:
+    /// `spawnPlayer` set the carbine and the default profile's first class
+    /// replaced it with the garand one frame later. The default is a fallback
+    /// for a fresh install, not a policy that outranks an explicit choice.
+    ///
+    /// Before this distinction existed, a client that answered the stock
+    /// weapon menu with the carbine still spawned with the default profile's
+    /// garand, which is indistinguishable from Create-a-Class not working.
+    pub fn loadout_for(
+        &self,
+        name: &str,
+        weapons: &WeaponTable,
+        chosen: Option<usize>,
+    ) -> Option<Loadout> {
+        if !self.has_profile(name) && chosen.is_some() {
+            return None;
+        }
         let profile = self.profile(name);
         let index = self.active_index(name);
         let class = profile
@@ -343,7 +365,9 @@ mod tests {
             "fraggrenade_mp",
         ]);
         let classes = Classes::new(None);
-        let l = classes.loadout_for("anyone", &t).expect("default resolves");
+        let l = classes
+            .loadout_for("anyone", &t, None)
+            .expect("default resolves");
         assert!(l.primary.is_some());
         assert!(l.secondary.is_some());
     }
@@ -354,6 +378,53 @@ mod tests {
         assert!(!classes.has_profile("stranger"));
         assert_eq!(classes.profile("stranger"), &classes.default);
         assert_eq!(classes.active_index("stranger"), 0);
+    }
+
+    /// The bug this guards: applying the built-in default to a player who had
+    /// just picked a weapon at the stock weapon menu replaced their choice.
+    /// `chosen` is that weapon, and a name with no profile of its own keeps it.
+    #[test]
+    fn a_profile_less_name_that_chose_a_weapon_keeps_it() {
+        let classes = Classes::new(None);
+        let t = table(&["m1carbine_mp", "m1garand_mp", "thompson_mp", "colt_mp"]);
+        let carbine = crate::configstrings::weapon_index("m1carbine_mp").unwrap();
+        assert_eq!(
+            classes.loadout_for("stranger", &t, Some(carbine)),
+            None,
+            "the default does not outrank the weapon menu"
+        );
+        // Having chosen nothing, the same name still gets the default, so a
+        // fresh install is playable with nothing authored.
+        assert!(classes.loadout_for("stranger", &t, None).is_some());
+    }
+
+    /// A profile of its own always wins, chosen weapon or not: that is the
+    /// whole point of Create-a-Class.
+    #[test]
+    fn a_profile_of_its_own_beats_the_weapon_menu_either_way() {
+        let mut classes = Classes::new(None);
+        let mut c = Class::new("Mine");
+        c.set(ClassSlot::Primary, "thompson_mp");
+        classes.insert(
+            "nathan",
+            Profile {
+                name: "Nathan".into(),
+                classes: vec![c],
+            },
+        );
+        let t = table(&["m1carbine_mp", "thompson_mp"]);
+        let carbine = crate::configstrings::weapon_index("m1carbine_mp").unwrap();
+        for chosen in [None, Some(carbine)] {
+            assert_eq!(
+                classes
+                    .loadout_for("nathan", &t, chosen)
+                    .unwrap()
+                    .primary
+                    .as_deref(),
+                Some("thompson_mp"),
+                "the class wins with chosen={chosen:?}"
+            );
+        }
     }
 
     #[test]
@@ -378,7 +449,7 @@ mod tests {
         let t = table(&["m1garand_mp", "thompson_mp"]);
         assert_eq!(
             classes
-                .loadout_for("nathan", &t)
+                .loadout_for("nathan", &t, None)
                 .unwrap()
                 .primary
                 .as_deref(),
@@ -399,7 +470,7 @@ mod tests {
             },
         );
         let t = table(&["m1carbine_mp"]);
-        assert!(classes.loadout_for("broken", &t).is_none());
+        assert!(classes.loadout_for("broken", &t, None).is_none());
     }
 
     #[test]
@@ -423,7 +494,11 @@ mod tests {
         assert!(classes.profile("beta").classes.is_empty());
         let t = table(&["sten_mp"]);
         assert_eq!(
-            classes.loadout_for("alpha", &t).unwrap().primary.as_deref(),
+            classes
+                .loadout_for("alpha", &t, None)
+                .unwrap()
+                .primary
+                .as_deref(),
             Some("sten_mp")
         );
     }

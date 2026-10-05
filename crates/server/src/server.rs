@@ -1106,6 +1106,12 @@ impl Server {
     }
 
     /// Which class each profile is running, for a UI or a test to read.
+    /// The weapon table this level loaded: the configstring-7 index to parsed
+    /// defs mapping both the server and a test resolve names through.
+    pub fn weapon_table(&self) -> std::rc::Rc<crate::weapons::WeaponTable> {
+        self.weapon_table.clone()
+    }
+
     pub fn classes(&self) -> &crate::classes::Classes {
         &self.classes
     }
@@ -3328,14 +3334,20 @@ impl Server {
             // gave it with the class its profile resolves to. After the spawn
             // pass above, so the playerstate reset cannot wipe the clips, and
             // before the weapon mirror below, so this frame's snapshot already
-            // carries the class. A client with no playable profile keeps the
-            // stock loadout.
+            // carries the class.
+            //
+            // `chosen` is the weapon `spawnPlayer` set, which is the one the
+            // player picked at the stock weapon menu. It only decides the
+            // no-profile case: a name with a profile of its own always gets
+            // its class, and a name with none keeps what it chose rather than
+            // being handed the built-in default behind its back.
             for slot in spawned_into_play {
                 let name = match self.clients.get(slot).and_then(Option::as_ref) {
                     Some(c) => c.name.clone(),
                     None => continue,
                 };
-                let Some(loadout) = self.classes.loadout_for(&name, &weapons) else {
+                let chosen = Some(rt.client_weapons(slot).current as usize);
+                let Some(loadout) = self.classes.loadout_for(&name, &weapons, chosen) else {
                     continue;
                 };
                 for p in &loadout.problems {
