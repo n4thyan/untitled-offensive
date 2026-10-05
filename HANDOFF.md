@@ -748,42 +748,130 @@ Proven by tests:
   spawn weapon (`script.rs`,
   `a_loadout_replaces_the_stock_weapons_and_ammo`).
 
-**Not proven: a live match.** The end-to-end tests in
-`crates/server/tests/classes.rs` currently *skip*, because on this machine the
-merged CoD1+UO install's `dm.gsc` never gets a client past the team menu — see
-§16.2. They will run on an asset set that spawns. The unit test above is the
-reason the loadout logic is trustworthy in the meantime.
+**PROVEN IN THE REAL GAME.** The human player launched
+`run-dev-match.bat mp_carentan dm 3`, saw mp_carentan rendered in first
+person with the class loadout applied — HUD `Thompson / Full_Auto`, ammo
+`30 | 360` — and killed bots and was killed by them. Create-a-Class, the
+menu join, spawn, combat and death/respawn all work in the actual client.
+See §0.2 for the full record and the commits.
 
-## 16.2 — A PRE-EXISTING FAILURE BLOCKS LIVE-SPAWN TESTING
+## 0.2 — PLAYABLE ON A STOCK MAP, WITH CREATE-A-CLASS
 
-`cargo test --release -p vcod-server` reports **4 failures** when run with
-`COD_DIR` pointed at this machine's install. They are **not** regressions: the
-same 4 fail at the clean checkpoint `ad32f34`, and with no `COD_DIR` the suite
-is **514 passed, 0 failed** exactly as §16 records.
+Confirmed **2026-10-05** by the human player, on screen:
 
-- `game::hitrig::the_stock_assembly_has_a_hittable_head` reads **5** hittable
-  heads where the fixture expects 4 — the merged install's player model has an
-  extra head bone that CoD 1.1 alone does not.
-- `game::combat::the_stock_weapons_means_of_death_is_the_files_rifle_bullet`,
-  `a_body_in_the_line_shields_a_blast…` and
-  `game::script::the_bootstrap_precaches_the_russian_team_menu_on_mp_pavlov`
-  fail alongside them.
+- window `vcod — mp_carentan`, map visibly rendered, first-person view;
+- HUD `Thompson / Full_Auto`, ammo `30 | 360`, health and match timer up;
+- bots present; the player killed them and was killed by them;
+- the M1 Carbine the weapon menu was answered with was **not** in hand.
 
-The visible symptom for class testing: a joined client sits at `pm_type` 4
-(pre-spawn freeze) with `weapon` 0 forever, because **the weapon menu never
-opens** — the team menu is answered and then nothing spawns it. All 12
-`combat.rs` integration tests fail the same way. `Join::findings()` reports it
-directly: `"no weapon menu opened, so the client never spawned"`.
+So the whole chain works against the real client: connect, gamestate,
+the 1.5 three-menu handshake, spawn, class loadout, combat, death,
+respawn. `assets/classes/vcod.txt` is the profile; it is keyed to `vcod`,
+the name `NetClient::send_connect` hardcodes, so it applies with no extra
+wiring, and the Thompson is chosen because it is unmistakable next to the
+carbine.
 
-This install is CoD 1.1 with UO merged in, and `main/pak8.pk3` and `pak9.pk3`
-carry **different** `maps/MP/gametypes/dm.gsc` (29,387 vs 29,281 bytes). The
-handoff's 514/0 was almost certainly recorded against a different asset set.
+Launch it with:
 
-Worth fixing, because it is what blocks live-spawn verification of every
-multiplayer feature from here on — Create-a-Class, scoreboard, killstreaks.
-Either point `COD_DIR` at a stock 1.1 install, or find which pak's `dm.gsc` the
-engine should be reading. **Do not "fix" the four tests by loosening their
-assertions**: they encode retail numbers and are right about a stock install.
+```
+run-dev-match.bat mp_carentan dm 3
+```
+
+### What the logs say that looks alarming but is not
+
+`client 3 "vcod" begin (spectator)` is **not** a live status. It is emitted
+once, unconditionally, at client entry, before the client has answered a
+single menu, so it describes the starting state. It read as a live status
+and sent us hunting a join bug in code that was already correct, while the
+player was visibly in the map holding a class weapon. Reworded at
+`f26409c` to `begin (starting as spectator)`. The live state is `pm_type`,
+and the transitions out of spectator are logged where they happen.
+
+## 0.3 — WHY MULTIPLAYER JOIN WAS BROKEN, AND WHY IT WAS NOT A UO MERGE
+
+**Supersedes the "merged CoD1 + United Offensive install" story below, which
+was wrong.** This install is stock CoD content: 16 canonical maps, no UO map
+or content set. The old "514 passed" figure was recorded *without* `COD_DIR`
+set, so the retail-dependent tests silently skipped and proved nothing.
+
+The real cause was two related things:
+
+1. **The gametype script is CoD 1.5's, not 1.1's.** pak5 carries 1.1's
+   `dm.gsc`; pak8/pak9 carry 1.5's, and pak9 is last in the pak sort order
+   so its file resolves. 1.5 opens a `serverinfo_<gametype>` menu *before*
+   the team menu and blocks on `waittill("menuresponse")` until the client
+   answers `"close"`. Answering nothing parks the join silently.
+2. **Menu identity must come from the menu's own configstring**, at
+   `1180 + index`, never from the `g_scriptMainMenu` cvar. Under 1.5 that
+   cvar still names the *team* menu while the *serverinfo* menu is open,
+   because a menu's index comes from the gametype's `precacheMenu` order.
+
+Read straight out of the two retail scripts:
+
+```
+pak5 (1.1): 0 menu_team       1 menu_weapon_allies  2 menu_weapon_axis ...
+pak9 (1.5): 0 menu_serverinfo 1 menu_team            2 menu_weapon_allies ...
+```
+
+`crates/client/src/play/join.rs` already did this correctly. The
+integration harness in `crates/server/tests/common/mod.rs` did not, and
+was fixed at `179c285`.
+
+## 0.4 — THE FIXTURES THAT WERE ENCODING CoD 1.1 ASSETS
+
+**The "Pk3Fs inflates model data wrongly" theory was disproven and should not
+be revisited.** The evidence: `Pk3Fs` returns bytes whose CRC32 matches the
+*resolving* archive's central-directory entry exactly — pak8's `0x938b319b`
+for `xmodelparts/USAirborne3`, which is not pak0's `0x331e6b3b`. Both
+archives match their own CRCs, and the `zip` crate verifies CRC on read, so
+a bad inflate could not have passed silently. The byte differences that
+started this were pak8's 1.5 model set against pak0's 1.1 one, hand-compared
+without noticing they were different files.
+
+CoD 1.5's paks ship replacements that override pak0, and six fixtures encoded
+the 1.1 values. All corrected at `773dd20` against the real archives:
+
+- `rifleBullet 1` for the Kar98k, Enfield and Mosin (pak0 says 0);
+- `ui_allow_*` menu gates, where pak8 renames pak0's `scr_allow_*`;
+- 1.5's `precacheMenu` puts `menu_serverinfo` at 1180;
+- `g_gametype` must be set or the menu is literally named `serverinfo_`;
+- `xmodelparts/USAirborne3`: `back_up` 5 not 4, `tag_weapon_right` 10 not 18,
+  and a re-authored thigh box;
+- two `should_panic` tests guard `debug_assert!` and cannot pass under
+  `--release`, so they are `cfg_attr(not(debug_assertions), ignore)`.
+
+**Current real-data result: 1039 passed, 1 failed.** The one failure is
+`skeleton::tests::real_models_pose_sanely`, a first-person *viewmodel*
+bind-pose offset (`[-9.008 1.987 7.821]` where identity is expected). It
+fails identically at `ad32f34`, is pre-existing, and reads nothing in the
+spawn, class, hit-registration or blast path. **Parked** unless it becomes
+visibly wrong in play.
+
+## 0.5 — WHAT THE NEXT SESSION SHOULD ACTUALLY DO
+
+The foundation is done and verified in the real game. In priority order:
+
+1. **Class selection UI.** `assets/classes/*.txt` is the proven backend; the
+   first playable class is currently always the active one. Build the
+   in-game `CREATE A CLASS` screen (Rifleman / Assault / Support / Custom 4-5),
+   server-validated, persisting, affecting the next spawn. Do not rewrite the
+   class architecture — add a selection path on top of it.
+2. **Scoreboard.** `crates/client/src/hud/scoreboard.rs` (695 lines) already
+   implements a retail-accurate Tab scoreboard off the `b` command, and the
+   player has seen it working. What is missing is the **WaW/MW2 presentation**:
+   it renders score / ping / time only. `score` and `deaths` are real
+   `ClientState` wire fields (`game/fields.rs`, offsets 8416 and 8420);
+   kills and assists are not, so they need a stats model behind it. Keep that
+   model separate from rendering — it later feeds killstreaks, the post-match
+   screen, and persistent stats.
+3. Player-stat persistence, then the killstreak framework (3 Recon,
+   4 Counter-Recon, 7 Attack Dogs), then killcam. Read
+   `crates/server/tests/killcam.rs` before designing killcam; the player has
+   already seen it run and reported it "looks a bit funny", so there is a real
+   visual issue to look at.
+
+Do not spend the session on Toccoa, custom maps, MW2 ports, ET/WaW asset
+converters, weapon re-research, or the parked bind-pose test.
 
 ---
 
