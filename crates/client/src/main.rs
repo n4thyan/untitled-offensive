@@ -2031,17 +2031,43 @@ impl ApplicationHandler for App {
                                     if let Some(v) = &predicted {
                                         cam.pos = v.origin + Vec3::Z * v.view_height;
                                     }
-                                    let view_ps = net.snapshots().newest().and_then(|s| {
-                                        (!following && pmove::predict::predictable(pm_type)).then(
-                                            || match &predicted {
-                                                Some(v) => play::view::ViewPs::from_predicted(
-                                                    &v.pred,
-                                                    s.ps.field_i32(p, "viewmodelIndex"),
-                                                ),
-                                                None => play::view::ViewPs::from_snapshot(p, &s.ps),
-                                            },
-                                        )
-                                    });
+                                    // Prediction only describes *our* client, so the
+                                    // rig comes from the snapshot whenever it does
+                                    // not: while following (the killcam) the
+                                    // snapshot's `clientNum` is the followed
+                                    // client, so its `weapon` and
+                                    // `viewmodelIndex` are the killer's, and the
+                                    // same goes for the dead and intermission
+                                    // pm_types that take no view from the cmd.
+                                    //
+                                    // Gating the whole rig on `!following` left the
+                                    // killcam with the follower's camera and no
+                                    // weapon at all - their POV moved, but nothing
+                                    // was ever asked to draw the gun in it.
+                                    // A local client that is dead is not a
+                                    // first-person view of anybody: the camera
+                                    // is on the corpse, and the snapshot's ps is
+                                    // still ours, so reading a rig from it would
+                                    // hang our own gun in the death view. Only
+                                    // following has a *someone else's* ps to
+                                    // read, and that is the killcam.
+                                    let rig_ps = if following {
+                                        net.snapshots()
+                                            .newest()
+                                            .map(|s| play::view::ViewPs::from_snapshot(p, &s.ps))
+                                    } else if pmove::predict::predictable(pm_type) {
+                                        net.snapshots().newest().map(|s| match &predicted {
+                                            Some(v) => play::view::ViewPs::from_predicted(
+                                                &v.pred,
+                                                s.ps.field_i32(p, "viewmodelIndex"),
+                                            ),
+                                            None => play::view::ViewPs::from_snapshot(p, &s.ps),
+                                        })
+                                    } else {
+                                        None
+                                    };
+                                    let view_ps = rig_ps;
+                                    debug_assert!(!following || view_ps.is_some(), "the killcam has no playerstate to draw the killer's weapon from");
                                     if let Some(ps) = &view_ps {
                                         if let Some(models) =
                                             view.sync_rig(&self.fs, net.configstrings(), ps)

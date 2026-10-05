@@ -18,6 +18,17 @@ pub struct Localized {
 impl Localized {
     /// Every `.str` under the English directory; a missing or unreadable file
     /// is skipped, so a stripped install still resolves what it has.
+    /// The localized `.str` tables, from every `localized_english_pak*.pk3`
+    /// in the search path. These live in `main/` beside the other paks (not
+    /// at the install root), and the later ones win, so the whole family is
+    /// read in archive order and the last value for a reference stands.
+    ///
+    /// Taking only `pak1` is a real trap: `mpscript.str` and `menu.str` are
+    /// in `pak1`, but later paks carry the *additions* to them, and a
+    /// reference missing from whichever single pak you picked falls through
+    /// `translate` to its own bare name - which is what put
+    /// `MPSCRIPT_KILLCAM` and `MPSCRIPT_PRESS_ACTIVATE_TO_RESPAWN` on the HUD
+    /// as raw keys.
     pub fn load(fs: &Pk3Fs) -> Localized {
         let mut l = Localized::default();
         for path in fs.list_prefix(LANGUAGE_DIR) {
@@ -59,8 +70,19 @@ impl Localized {
     /// text passes through. A `{+command}` token in the result is replaced with
     /// the key bound to it, the way the retail client does at draw time.
     pub fn translate<'a>(&'a self, text: &'a str) -> Cow<'a, str> {
-        let Some(key) = text.strip_prefix('@') else {
-            return Cow::Borrowed(text);
+        // A bare name is a reference too, and the wire form is bare: the
+        // server's `setText` stores the name in a configstring with no `@`
+        // (see `crates/server/src/game/builtins/hud.rs`), so a client that
+        // insisted on the prefix drew every localized HUD element as its own
+        // key - `MPSCRIPT_KILLCAM` and
+        // `MPSCRIPT_PRESS_ACTIVATE_TO_RESPAWN` on screen instead of words.
+        //
+        // A bare string is only a reference if the table has it; anything
+        // else is literal text and passes through untouched.
+        let key = match text.strip_prefix('@') {
+            Some(k) => k,
+            None if self.get(text).is_some() => text,
+            None => return Cow::Borrowed(text),
         };
         match self.get(key) {
             Some(value) => substitute_binds(value, &|_| None),
@@ -176,5 +198,37 @@ mod tests {
         let l = Localized::load(&fs);
         assert_eq!(l.get("MPMENU_1_AMERICAN"), Some("1. American"));
         assert!(l.get("MPMENU_1_M1A1_CARBINE").is_some());
+    }
+
+    /// The prompts the player actually sees must be words, not keys.
+    ///
+    /// These two are what `dm.gsc` hands to `setText` on death, and both were
+    /// drawn as their own reference names because the language pak is at the
+    /// install root rather than in `main/`, so a `Pk3Fs` mounted on `main/`
+    /// found no `.str` files at all. A regression here reads as "the HUD is
+    /// broken" with nothing in the log to explain it.
+    #[test]
+    #[ignore = "needs a retail install; set COD_DIR"]
+    fn the_retail_prompts_resolve_to_words_not_keys() {
+        let game = std::env::var("COD_DIR").expect("COD_DIR");
+        let fs = Pk3Fs::open(&std::path::Path::new(&game).join("main")).unwrap();
+        let l = Localized::load(&fs);
+        // Bare, as the wire carries it: `setText` configstrings the name
+        // with no `@`.
+        for key in ["MPSCRIPT_PRESS_ACTIVATE_TO_RESPAWN", "MPSCRIPT_KILLCAM"] {
+            let out = l.translate(key);
+            assert_ne!(
+                out, key,
+                "{key} fell through to its own name: no .str tables loaded"
+            );
+            assert!(!out.starts_with("MPSCRIPT_"), "{key} -> {out}");
+            println!("{key} -> {out}");
+        }
+        // The respawn prompt is the one that carries a bind token.
+        assert!(
+            l.translate("MPSCRIPT_PRESS_ACTIVATE_TO_RESPAWN")
+                .contains("respawn"),
+            "respawn prompt text"
+        );
     }
 }
