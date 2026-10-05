@@ -949,7 +949,7 @@ pub fn strip_colors(s: &str) -> String {
 }
 
 /// Split on whitespace; a double-quoted run is one token.
-fn tokenize(s: &str) -> Vec<String> {
+pub fn tokenize(s: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut chars = s.chars().peekable();
     while let Some(&c) = chars.peek() {

@@ -108,6 +108,8 @@ impl Screens {
         }
     }
 
+    /// The screen that is up. Used by the render loop to decide what to draw.
+    #[allow(dead_code)]
     pub fn current(&self) -> Option<Screen> {
         self.current
     }
@@ -126,6 +128,9 @@ impl Screens {
         self.current = None;
     }
 
+    /// The registry the selector reads. Exposed so a caller that needs the
+    /// playable list (a rotation, a vote) does not build its own.
+    #[allow(dead_code)]
     pub fn registry(&self) -> &MapRegistry {
         &self.registry
     }
@@ -146,6 +151,7 @@ impl Screens {
     }
 
     /// The class names the picker offers.
+    #[allow(dead_code)]
     pub fn classes(&self) -> &[String] {
         &self.classes
     }

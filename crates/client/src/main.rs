@@ -1498,8 +1498,6 @@ impl App {
         let Mode::Online {
             screens,
             screen_menu,
-            net,
-            profile,
             ..
         } = &mut self.mode
         else {
@@ -1631,11 +1629,26 @@ impl App {
                     *screen_menu = screens.menu();
                 }
             }
-            Action::StartMatch { .. } | Action::Nothing => {
-                // START MATCH is wired to the launcher path in a later step;
-                // until then the row is honest about doing nothing yet.
-                log::info!("menu: start match requested (launcher path pending)");
+            Action::StartMatch {
+                map,
+                gametype,
+                bots,
+                bot_combat,
+            } => {
+                // The settings come from the action, which the Play screen
+                // built from the same held state these accessors expose.
+                if let Mode::Online { screens, .. } = &self.mode {
+                    debug_assert_eq!(screens.bot_count(), bots);
+                    debug_assert_eq!(screens.bot_combat(), bot_combat);
+                    debug_assert_eq!(screens.selected_map(), Some(map.as_str()));
+                }
+                // The local match is started through the launcher path in a
+                // later step; until then the row is honest about it.
+                log::info!(
+                    "menu: start match {map} {gametype} {bots} bots, bot_combat={bot_combat} (launcher path pending)"
+                );
             }
+            Action::Nothing => {}
         }
     }
 
@@ -2151,6 +2164,11 @@ impl ApplicationHandler for App {
                                         ) {
                                             Ok(()) => {
                                                 *menu_view = None;
+                                                // The new paks may carry maps the
+                                                // old ones lacked; the selector
+                                                // must offer them.
+                                                screens
+                                                    .set_registry(maplist_for(&self.fs));
                                                 r.reopen(&self.fs);
                                                 view.reopen();
                                             }

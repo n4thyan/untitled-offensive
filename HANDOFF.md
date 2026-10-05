@@ -16,6 +16,62 @@ see §0.1 and `docs/research/weapon-inventory-and-port-feasibility.md`.
 
 ---
 
+# 0.0 — HUMAN-VERIFIED MILESTONE (2026-10-05, evening)
+
+**The menu system, Create-a-Class, class picker, and full gameplay loop are now
+human-confirmed in the graphical client.** Nathan played a live `mp_carentan`
+match and verified on screen:
+
+| System | Status |
+|---|---|
+| Main Multiplayer menu renders | **confirmed** |
+| Menu navigation (keyboard) | **confirmed** |
+| Create-a-Class screen | **confirmed** |
+| Rifleman / Assault / Support class picker | **confirmed** |
+| Selected classes apply in gameplay | **confirmed** |
+| Combat (move/aim/shoot/damage) | **confirmed** |
+| Bots fight and can kill the player | **confirmed** |
+| Killcam | **confirmed** |
+| Death / respawn | **confirmed** |
+| Sprint / melee / grenades | **confirmed** |
+| Scoreboard (Tab) | **confirmed** |
+| 8-bot matches | **confirmed** |
+
+This is no longer "tests only" — the full loop from menu → class select →
+spawn → combat → death → respawn is proven in the real client.
+
+## Commits this session
+
+| Commit | What |
+|---|---|
+| `41c649a` | Recording checkpoint: bot-slot growth fix, `--classes-dir`, launcher text |
+| `6ec6391` | Class lifecycle (queue-next-spawn), profile wire sync, maplist, mapvote |
+| `a851bba` | Reusable menu shell (`hud/screens.rs`), multiplayer/pause/class-picker screens |
+
+## Test state
+
+- **428 client tests pass, 0 fail** (menu shell, screens, class picker, maplist, mapvote)
+- **4 server integration tests pass** (class loadout, no-profile fallback, unknown weapon, selectclass exploit guard)
+- 13 pre-existing `_ab` test failures (retail asset fixtures, not regressions)
+- `cargo build --release` — clean, 0 warnings
+
+## Still stubbed (next tasks)
+
+- **START MATCH** — Play screen configures settings but doesn't launch a match yet
+- **LEAVE MATCH** — pause menu row is a stub
+- **Map vote** — module is complete and tested, not wired into end-of-match
+- **Custom maps** — registry/playlists not built yet
+- **Killstreaks** — not started
+
+## What is preserved
+
+- `run-dev-match.bat` still works as the dev launcher
+- The queued-next-spawn class architecture is correct — alive players cannot swap loadouts
+- B key remains as a dev shortcut for Create-a-Class editing
+- Nothing pushed, no retail files modified, no PK3s committed
+
+---
+
 # 0.1 — WHY NO NEW WEAPON WAS PORTED
 
 The brief asked for one WWII weapon ported end to end. It was surveyed and is

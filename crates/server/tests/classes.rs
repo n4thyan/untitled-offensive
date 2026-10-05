@@ -186,3 +186,43 @@ fn an_unknown_weapon_in_a_class_does_not_break_the_spawn() {
         "and the frag"
     );
 }
+
+/// `selectclass` queues a class for the next spawn and does not swap the live
+/// one: the exploit guard, proven through the real server rather than the
+/// store's own unit test.
+#[test]
+fn selectclass_queues_a_class_without_swapping_the_live_one() {
+    // A profile with two classes: the first is the stock spawn, the second a
+    // different weapon the client will ask for mid-life.
+    let two = "profile Test\nclass First\nprimary m1garand_mp\nsecondary colt_mp\n\
+               class Second\nprimary thompson_mp\nsecondary colt_mp\n";
+    let Some((mut sv, mut cl, weapons)) = join_with(&[two], "m1carbine_mp") else {
+        eprintln!("skipping: no game data");
+        return;
+    };
+    // Spawned on the first class.
+    let snap = cl.snapshots().newest().expect("a snapshot").clone();
+    assert_eq!(
+        snap.ps.field_i32(&PROTOCOL_V1, "weapon"),
+        wi("m1garand_mp"),
+        "the first class is the active one"
+    );
+
+    // Ask for the second class, then step frames without dying. The live
+    // weapon must not change: the choice is queued, not applied.
+    cl.send_reliable("selectclass 1");
+    let mut now = Instant::now();
+    let q = Rc::new(RefCell::new(Queues::default()));
+    for _ in 0..20 {
+        now += std::time::Duration::from_millis(50);
+        cl.send_frame(&vcod_common::net::msg::NULL_USERCMD);
+        common::step(&mut sv, &q, &mut cl, now);
+    }
+    let snap = cl.snapshots().newest().expect("a snapshot").clone();
+    assert_eq!(
+        snap.ps.field_i32(&PROTOCOL_V1, "weapon"),
+        wi("m1garand_mp"),
+        "an alive player cannot swap loadouts by asking for another class"
+    );
+    let _ = weapons;
+}
