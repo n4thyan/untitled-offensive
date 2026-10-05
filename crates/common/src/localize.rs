@@ -70,25 +70,11 @@ impl Localized {
     /// text passes through. A `{+command}` token in the result is replaced with
     /// the key bound to it, the way the retail client does at draw time.
     pub fn translate<'a>(&'a self, text: &'a str) -> Cow<'a, str> {
-        // A bare name is a reference too, and the wire form is bare: the
-        // server's `setText` stores the name in a configstring with no `@`
-        // (see `crates/server/src/game/builtins/hud.rs`), so a client that
-        // insisted on the prefix drew every localized HUD element as its own
-        // key - `MPSCRIPT_KILLCAM` and
-        // `MPSCRIPT_PRESS_ACTIVATE_TO_RESPAWN` on screen instead of words.
-        //
-        // A bare string is only a reference if the table has it; anything
-        // else is literal text and passes through untouched.
-        let key = match text.strip_prefix('@') {
-            Some(k) => k,
-            None if self.get(text).is_some() => text,
-            None => return Cow::Borrowed(text),
-        };
-        match self.get(key) {
+        match self.resolve(text) {
             Some(value) => substitute_binds(value, &|_| None),
             // A key with no table entry still gets its binds resolved, so
             // `{+activate}` never leaks into a HUD line even untranslated.
-            None => substitute_binds(key, &|_| None),
+            None => substitute_binds(text, &|_| None),
         }
     }
 
@@ -113,13 +99,29 @@ impl Localized {
         text: &'a str,
         bind_of: impl Fn(&str) -> Option<String>,
     ) -> Cow<'a, str> {
-        let resolved = match text.strip_prefix('@') {
-            Some(key) => self.get(key),
-            None => None,
-        };
-        match resolved {
+        match self.resolve(text) {
             Some(value) => substitute_binds(value, &bind_of),
             None => substitute_binds(text, &bind_of),
+        }
+    }
+
+    /// The table value `text` names, or `None` when it is not a reference.
+    ///
+    /// A reference is `@KEY` in script source, but *bare* on the wire:
+    /// `setText` configstrings the name with no prefix (see
+    /// `crates/server/src/game/builtins/hud.rs`). Both forms are accepted, and
+    /// a bare string only counts when the table actually has it, so literal
+    /// HUD text passes through untouched.
+    ///
+    /// Both [`Self::translate`] and [`Self::translate_binds`] go through here.
+    /// They cannot diverge: when they did, `translate` resolved the reference
+    /// and `translate_binds` did not, so the respawn prompt read
+    /// `Press [{+activate}] to respawn` while every other localized element
+    /// read as its own key.
+    fn resolve(&self, text: &str) -> Option<&str> {
+        match text.strip_prefix('@') {
+            Some(key) => self.get(key),
+            None => self.get(text),
         }
     }
 }
@@ -224,11 +226,18 @@ mod tests {
             assert!(!out.starts_with("MPSCRIPT_"), "{key} -> {out}");
             println!("{key} -> {out}");
         }
-        // The respawn prompt is the one that carries a bind token.
-        assert!(
-            l.translate("MPSCRIPT_PRESS_ACTIVATE_TO_RESPAWN")
-                .contains("respawn"),
-            "respawn prompt text"
-        );
+        // The respawn prompt is the one that carries a bind token, and this
+        // is the string the player actually sees: the bare wire form run
+        // through the bind substitution. It must read as a key, never as
+        // `{+activate}` and never as the reference name.
+        let binds = |c: &str| match c {
+            "activate" => Some("F".to_string()),
+            _ => None,
+        };
+        let drawn = l.translate_binds("MPSCRIPT_PRESS_ACTIVATE_TO_RESPAWN", binds);
+        println!("drawn: {drawn}");
+        assert_eq!(drawn, "Press [F] to respawn");
+        assert!(!drawn.contains("MPSCRIPT_"), "{drawn}");
+        assert!(!drawn.contains("{+"), "{drawn}");
     }
 }
