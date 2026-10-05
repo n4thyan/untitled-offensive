@@ -80,7 +80,7 @@ const MAX_PACKETS_PER_FRAME: usize = 256;
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    let args = Args::parse();
+    let mut args = Args::parse();
     if args.test_entities > vcod_server::world::MAX_TEST_ENTITIES {
         bail!(
             "--test-entities {} exceeds {}, the most that fits below ENTITYNUM_WORLD",
@@ -88,12 +88,27 @@ fn main() -> Result<()> {
             vcod_server::world::MAX_TEST_ENTITIES
         );
     }
-    if args.bots > args.max_clients {
-        bail!(
-            "--bots {} exceeds --max-clients {}; each bot takes a real slot",
+    // Bots and the human share one slot pool, so a bot count that fills the
+    // pool leaves no room for the player: `--bots 8` against the default
+    // `--max-clients 8` filled every slot and the client was refused with
+    // EXE_SERVERISFULL. Grow the pool by one rather than refusing, so the
+    // recording setup works without a flag the player should not need.
+    if args.bots >= args.max_clients {
+        let grown = args.bots + 1;
+        log::info!(
+            "--bots {} fills --max-clients {}; growing the pool to {} so the player has a slot",
             args.bots,
-            args.max_clients
+            args.max_clients,
+            grown
         );
+        args.max_clients = grown.min(vcod_server::server::MAX_CLIENTS);
+        if args.bots >= args.max_clients {
+            bail!(
+                "--bots {} exceeds --max-clients {} even after growing; each bot takes a real slot",
+                args.bots,
+                args.max_clients
+            );
+        }
     }
     let dir = args.game_dir.join(&args.mod_dir);
     let fs = std::rc::Rc::new(

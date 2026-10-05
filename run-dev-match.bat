@@ -94,7 +94,7 @@ echo.
 
 REM --- dedicated server -------------------------------------------------------
 echo Starting dedicated server on udp/28960 ...
-start "UNTITLED server" cmd /k ""%BIN%\vcod-server.exe" --game-dir "%GAME_DIR%" --overlay-dir "%OVERLAY%" --gametype %GAMETYPE% --bots %BOTS% --bots-shoot --port 28960 %MAP% > "%LOGS%\server.log" 2>&1"
+start "UNTITLED server" cmd /k ""%BIN%\vcod-server.exe" --game-dir "%GAME_DIR%" --overlay-dir "%OVERLAY%" --gametype %GAMETYPE% --bots %BOTS% --bots-shoot --port 28960 --classes-dir "%ROOT%assets\classes" %MAP% > "%LOGS%\server.log" 2>&1"
 
 REM The server needs to load the map, parse the gametype script and run the
 REM bots through the join menus before a client can see a live match. 12s is
@@ -110,8 +110,8 @@ start "UNTITLED client" "%BIN%\vcod.exe" --game-dir "%GAME_DIR%" --overlay-dir "
 echo.
 echo Client launched.
 echo   click the game window to capture the mouse, Esc to release it
-echo   WASD move . Space jump . C crouch . Ctrl prone . Q/E lean . Shift walk
-echo   LMB fire . RMB aim . R reload . 1-4 weapons . F3 debug overlay
+echo   WASD move . Space jump . C crouch . Ctrl prone . Q/E lean . Shift sprint
+echo   V melee . G/4/wheel grenade . LMB fire . RMB aim . R reload . 1-4 weapons . F3 debug overlay
 echo.
 echo Server log : %LOGS%\server.log
 echo Client log : %LOGS%\client.log
