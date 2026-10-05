@@ -72,11 +72,32 @@ Cross-referenced against CoD1's 32 (`WEAPON_LIST` in
 | `mg42` | `mg42_bipod_duck_mp` / `_prone_mp` / `_stand_mp` |
 | `grenade`, `pineapple` | `fraggrenade_mp`, `stielhandgranate_mp` |
 | `m7` | `thompson_mp` (the M7 *is* a Thompson pattern) |
-| `flamethrower` | *(CoD1 flamethrower exists in UO, not in base 1.1)* |
 | `binocs` | `kar98k_sniper_mp`, `mosin_nagant_sniper_mp` |
 
 Notably **CoD1 already has a bipod-deployable MG42** (three stance variants),
 which is ET's signature weapon. There is no gap to fill there.
+
+## Corrected 2026-10-05: two firearms here *are* genuinely absent
+
+An earlier version of this file put `flamethrower` in the "covered" table with
+the note *"CoD1 flamethrower exists in UO, not in base 1.1"*. **That is wrong,
+and so was the earlier HANDOFF summary that concluded ET held no firearms worth
+having.** A full inventory of the CoD 1.1 + UO paks
+(`tools/re/inventory_weapons.py`, `find_in_paks.py`, `xref_viewmodels.py` — see
+`docs/research/weapon-inventory-and-port-feasibility.md`) found:
+
+- **No flamethrower in CoD 1.1 at all, UO included.** There is no
+  `weapon_flamethrower*` def, no viewmodel and no animation family.
+- **No Gewehr 43.** `k43` is on ET's list (line 48) and is absent from CoD 1.1.
+
+Both are on the "should we have this" list, and both are among the biggest gaps
+in the roster. So ET's inventory is more interesting than this file previously
+claimed.
+
+**The conclusion is still "do not port":** `.mdc` geometry and the `.weap`
+schema share nothing with CoD 1.1's xmodel and weapon-def pipeline. Either one
+is a converter project plus a hand-built viewmodel, for a single gun. That is a
+project, not a task.
 
 ## Genuinely additive — but not firearms
 

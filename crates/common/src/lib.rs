@@ -5,6 +5,7 @@ pub mod animtree;
 pub mod assets;
 pub mod bonetrace;
 pub mod bsp;
+pub mod classes;
 pub mod collision;
 pub mod game_dir;
 pub mod localize;

@@ -1,0 +1,29 @@
+# UNTITLED — default Create-a-Class profile
+#
+# The profile a client with no file of its own gets. One `class` block per
+# class; the first playable one is the active class. Weapon values are
+# configstring-7 names (the same names the weapon menu uses). A slot with an
+# unknown weapon is dropped at load rather than trusted, so this file can be
+# edited freely without being able to break a spawn.
+#
+# The perk names are validated against a known list but do nothing yet.
+
+profile Default
+
+class Rifleman
+primary m1garand_mp
+secondary colt_mp
+equipment fraggrenade_mp
+perk1 perk_stopping_power
+
+class Assault
+primary thompson_mp
+secondary colt_mp
+equipment fraggrenade_mp
+perk1 perk_sleight_of_hand
+
+class Support
+primary bar_mp
+secondary colt_mp
+equipment fraggrenade_mp
+perk1 perk_juggernaut

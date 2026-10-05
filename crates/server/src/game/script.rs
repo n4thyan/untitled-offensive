@@ -1063,6 +1063,77 @@ impl ScriptRuntime {
             .unwrap_or_default()
     }
 
+    /// Give one weapon with a full magazine and its `maxAmmo` in reserve,
+    /// exactly as the stock `giveWeapon` + `giveMaxAmmo` pair does (a
+    /// `clipOnly` weapon gets the clip alone). The caller has already cleared
+    /// what the client held.
+    fn give_weapon_with_ammo(&mut self, slot: usize, name: &str) -> Option<u8> {
+        let index = crate::configstrings::weapon_index(name)?;
+        let weapons = self.host.weapons.clone();
+        let def = weapons.get(index)?;
+        let w = self.host.client_weapons.get_mut(slot)?;
+        w.give(index, weapons.slot(index));
+        if !def.clip_only {
+            self.host.weapon_op(
+                slot,
+                crate::game::host::WeaponOp::SetAmmo {
+                    ammo_index: def.ammo_index,
+                    rounds: def.max_ammo as i16,
+                },
+            );
+        }
+        self.host.weapon_op(
+            slot,
+            crate::game::host::WeaponOp::SetClip {
+                clip_index: def.clip_index,
+                rounds: def.clip_size as i16,
+            },
+        );
+        Some(index as u8)
+    }
+
+    /// Apply a resolved Create-a-Class loadout to a client that just spawned
+    /// into play: take what the stock script gave it this frame, then hand it
+    /// the class's weapons, with the primary as the spawn weapon. Runs after
+    /// the spawn pass, so the playerstate reset cannot wipe the clips.
+    ///
+    /// Every name was validated against the weapon table when the profile
+    /// loaded; a slot that no longer resolves is skipped here rather than
+    /// trusted, so a level loaded with a different table degrades cleanly.
+    pub fn apply_loadout(&mut self, slot: usize, loadout: &crate::classes::Loadout) {
+        if self.client_entity(slot).is_none() {
+            return;
+        }
+        // `takeAllWeapons`: the stock loadout the gametype's `spawnPlayer`
+        // gave this frame goes first. The held bits reach the sim through the
+        // per-frame mirror; the op empties the ammo and clip arrays.
+        if let Some(w) = self.host.client_weapons.get_mut(slot) {
+            *w = crate::weapons::PlayerWeapons::default();
+        }
+        self.host
+            .weapon_op(slot, crate::game::host::WeaponOp::TakeAll);
+
+        // The equipment (a grenade) goes last so it lands in the `grenade`
+        // slot the stock `giveGrenades` used, overriding the stock type.
+        let primary = loadout
+            .primary
+            .as_deref()
+            .and_then(|n| self.give_weapon_with_ammo(slot, n));
+        if let Some(secondary) = loadout.secondary.as_deref() {
+            self.give_weapon_with_ammo(slot, secondary);
+        }
+        if let Some(equipment) = loadout.equipment.as_deref() {
+            self.give_weapon_with_ammo(slot, equipment);
+        }
+        if let Some(index) = primary {
+            if let Some(w) = self.host.client_weapons.get_mut(slot) {
+                w.current = index;
+            }
+            self.host
+                .weapon_op(slot, crate::game::host::WeaponOp::SetCurrent(index));
+        }
+    }
+
     /// Writes back the weapon the sim's own machine switched to. The script
     /// host's copy is what `Server` mirrors into `ps.weapon` every frame, so
     /// a switch the usercmd's weapon byte asked for has to move it: without
@@ -1987,6 +2058,104 @@ impl ScriptRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A runtime with the real retail weapon table mounted and one client
+    /// entity in slot 0, which is what `apply_loadout` needs: a slot to write
+    /// into and weapon files to resolve names against. Returns `None` without
+    /// the paks, because an empty table resolves no name and would make the
+    /// test pass for the wrong reason.
+    fn runtime_with_weapons() -> Option<ScriptRuntime> {
+        let fs = vcod_common::testing::game_fs()?;
+        let mut rt = ScriptRuntime::for_test("main() {}");
+        rt.host.weapons = std::rc::Rc::new(crate::weapons::WeaponTable::load(&fs));
+        // `apply_loadout` writes through the slot's client entity, which
+        // `SV_SpawnServer` sets up before `ClientConnect` runs.
+        rt.vm.with_cx(|cx| {
+            rt.host
+                .ents
+                .spawn_client(cx, 0, None)
+                .expect("slot 0's entity");
+        });
+        Some(rt)
+    }
+
+    /// A class's loadout replaces what the gametype gave the player: the
+    /// three named weapons are held with their own ammo and clips, the primary
+    /// is the spawn weapon, and nothing of the stock loadout survives.
+    #[test]
+    fn a_loadout_replaces_the_stock_weapons_and_ammo() {
+        use vcod_common::pmove::weapon::NUM_AMMO;
+        let Some(mut rt) = runtime_with_weapons() else {
+            eprintln!("COD_DIR unset or has no main/: skipping");
+            return;
+        };
+        let carbine = crate::configstrings::weapon_index("m1carbine_mp").unwrap();
+        let thompson = crate::configstrings::weapon_index("thompson_mp").unwrap();
+        let colt = crate::configstrings::weapon_index("colt_mp").unwrap();
+        let frag = crate::configstrings::weapon_index("fraggrenade_mp").unwrap();
+
+        // The stock loadout, as `spawnPlayer` leaves it, then the class.
+        rt.give_weapon_with_ammo(0, "m1carbine_mp");
+        rt.host.weapon_op(
+            0,
+            crate::game::host::WeaponOp::SetAmmo {
+                ammo_index: 6,
+                rounds: 3,
+            },
+        );
+        let loadout = crate::classes::Loadout {
+            primary: Some("thompson_mp".into()),
+            secondary: Some("colt_mp".into()),
+            equipment: Some("fraggrenade_mp".into()),
+            perks: Vec::new(),
+            problems: Vec::new(),
+        };
+        rt.apply_loadout(0, &loadout);
+
+        let w = &rt.host.client_weapons[0];
+        assert!(has_bit(w.held, thompson), "the class primary is held");
+        assert!(has_bit(w.held, colt), "the class secondary is held");
+        assert!(has_bit(w.held, frag), "the class equipment is held");
+        assert!(!has_bit(w.held, carbine), "the stock carbine was taken");
+        assert_eq!(
+            w.current as usize, thompson,
+            "the primary is the spawn weapon"
+        );
+
+        // Ammo and clips: a queue drained into arrays, so the ops apply.
+        let mut ammo = [0i16; NUM_AMMO];
+        let mut clip = [0i16; NUM_AMMO];
+        for (_, op) in rt.take_weapon_ops() {
+            match op {
+                crate::game::host::WeaponOp::SetAmmo { ammo_index, rounds } => {
+                    ammo[ammo_index] = rounds
+                }
+                crate::game::host::WeaponOp::SetClip { clip_index, rounds } => {
+                    clip[clip_index] = rounds
+                }
+                crate::game::host::WeaponOp::TakeAll => {
+                    ammo = [0; NUM_AMMO];
+                    clip = [0; NUM_AMMO];
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(ammo[10], 0, "the carbine's stock reserve was cleared");
+        // The ammo index is the weapon file's own, not its cs7 position.
+        let td = rt.host.weapons.get(thompson).expect("the thompson's def");
+        assert!(
+            ammo[td.ammo_index] > 0,
+            "the thompson carries its own reserve"
+        );
+        assert_eq!(
+            clip[td.clip_index] as i32, td.clip_size as i32,
+            "and a full clip"
+        );
+    }
+
+    fn has_bit(held: u64, index: usize) -> bool {
+        index < 64 && held & (1u64 << index) != 0
+    }
 
     /// The per-tick copy from the sim keeps an op the sim has not applied
     /// yet: the copy predates it, the mirror must not.

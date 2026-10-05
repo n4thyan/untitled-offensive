@@ -55,6 +55,11 @@ struct Args {
     #[arg(long = "set", value_name = "NAME=VALUE")]
     set: Vec<String>,
 
+    /// A directory of Create-a-Class `*.txt` profiles, one file per client
+    /// name (the file stem is the name). Defaults to `assets/classes`.
+    #[arg(long, default_value = "assets/classes")]
+    classes_dir: std::path::PathBuf,
+
     /// Log one line per snapshot per client: send interval, the serverTime and
     /// commandTime a client predicts from, the usercmds consumed, and whether
     /// the frame went out as a delta.
@@ -136,6 +141,7 @@ fn main() -> Result<()> {
         },
         Instant::now(),
     );
+    server.load_classes(&args.classes_dir);
     server.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
     if let Some((stem, text)) = &overlay {
         server.overlay_script(&format!("maps/mp/gametypes/{stem}"), text);

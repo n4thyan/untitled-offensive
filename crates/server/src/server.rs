@@ -931,6 +931,9 @@ pub struct Server {
     /// The frames the killcam replays, kept while script has `setarchive`
     /// on and cleared by every level load (`crate::archive`).
     archive: crate::archive::Archive,
+    /// The Create-a-Class profiles, by client name. Loaded once at startup
+    /// and shared by every level; what a spawn reads to build a loadout.
+    classes: crate::classes::Classes,
 }
 
 /// A follower's frame: the followed client's number, its playerstate with
@@ -1067,6 +1070,7 @@ impl Server {
             bots_spawned: false,
             bot_enemies: BTreeMap::new(),
             archive: Default::default(),
+            classes: crate::classes::Classes::new(None),
         };
         // `(rand() << 16) ^ rand() ^ Sys_Milliseconds()`, SV_SpawnServer 0x808a3e0.
         sv.checksum_feed = (sv.rand() << 16) ^ sv.rand() ^ (now.elapsed().as_millis() as i32);
@@ -1091,6 +1095,23 @@ impl Server {
 
     pub fn client_count(&self) -> usize {
         self.clients.iter().flatten().count()
+    }
+
+    /// Load Create-a-Class profiles from a directory, replacing whatever the
+    /// store holds (the embedded default always stays). The binary calls this
+    /// once at startup; tests call it to point at a fixture directory. A
+    /// missing directory is not an error.
+    pub fn load_classes(&mut self, dir: &std::path::Path) {
+        self.classes = crate::classes::Classes::new(Some(dir));
+    }
+
+    /// Which class each profile is running, for a UI or a test to read.
+    pub fn classes(&self) -> &crate::classes::Classes {
+        &self.classes
+    }
+
+    pub fn classes_mut(&mut self) -> &mut crate::classes::Classes {
+        &mut self.classes
     }
 
     /// `sv_serverid`. The high nibble is the map load, the low one the
@@ -3228,10 +3249,14 @@ impl Server {
             // can reach; this is where the queue lands. Before the weapons,
             // because a spawn resets the whole playerstate and would wipe the
             // clip the same frame's `giveWeapon` just handed out.
+            let mut spawned_into_play: Vec<usize> = Vec::new();
             for s in rt.take_client_spawns() {
                 let Some(c) = self.clients.get_mut(s.slot).and_then(Option::as_mut) else {
                     continue;
                 };
+                if s.mode == SpawnMode::Player {
+                    spawned_into_play.push(s.slot);
+                }
                 // The client's own angles at this moment, not zero: a
                 // spectator that looked around before answering the weapon
                 // menu carries them, and `spawn_delta_angles` subtracts them
@@ -3297,6 +3322,33 @@ impl Server {
                 if s.mode != SpawnMode::Intermission {
                     c.last_processed_st = self.sv_time_ms;
                 }
+            }
+            // Create-a-Class: for every client that spawned into play this
+            // frame, replace the stock loadout the gametype's `spawnPlayer`
+            // gave it with the class its profile resolves to. After the spawn
+            // pass above, so the playerstate reset cannot wipe the clips, and
+            // before the weapon mirror below, so this frame's snapshot already
+            // carries the class. A client with no playable profile keeps the
+            // stock loadout.
+            for slot in spawned_into_play {
+                let name = match self.clients.get(slot).and_then(Option::as_ref) {
+                    Some(c) => c.name.clone(),
+                    None => continue,
+                };
+                let Some(loadout) = self.classes.loadout_for(&name, &weapons) else {
+                    continue;
+                };
+                for p in &loadout.problems {
+                    log::warn!("classes: {name:?}: {p}");
+                }
+                log::info!(
+                    "classes: {name:?} spawned with primary={:?} secondary={:?} equipment={:?} perks={:?}",
+                    loadout.primary,
+                    loadout.secondary,
+                    loadout.equipment,
+                    loadout.perks
+                );
+                rt.apply_loadout(slot, &loadout);
             }
             // The machine's own switches first: `pickup` writes `ps.weapon`
             // when a drop ends, and the mirror below would put the old

@@ -2506,6 +2506,7 @@ dependencies = [
  "env_logger",
  "glam",
  "log",
+ "tempfile",
  "vcod-common",
  "vcod-gsc",
 ]

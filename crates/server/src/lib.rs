@@ -3,6 +3,7 @@
 
 pub mod archive;
 pub mod bots;
+pub mod classes;
 pub mod client;
 pub mod configstrings;
 pub mod console;

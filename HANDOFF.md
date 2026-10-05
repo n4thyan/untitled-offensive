@@ -1,11 +1,47 @@
 # UNTITLED — Session Handoff
 
 A new classic Call of Duty–era FPS built on the vcod fork, running genuine
-Call of Duty 1.1 content from the user's own retail installation, now with its
-own first original map.
+Call of Duty 1.1 content from the user's own retail installation.
 
-**End-of-day checkpoint: `mp_toccoa` is playable.** A graphical client joins,
-spawns into the match with an M1 Carbine, and bots fight and die on the map.
+**Direction (2026-10-05): this is not a custom-map project any more.** The stock
+CoD maps are the map pool; `mp_toccoa` stays as a dev-only map (its source,
+tooling and launcher are intact, and it is in no rotation — it is reachable only
+by naming it explicitly). The target is a WWII CoD base with a curated arsenal,
+Create-a-Class, perks, a proper scoreboard, killstreaks and killcam.
+
+**End-of-day checkpoint: Create-a-Class is in and loadout application is
+unit-verified against the real retail weapon table.** The Phase 1/2 weapon
+survey is done and its conclusion is that *no* new weapon is portable today —
+see §0.1 and `docs/research/weapon-inventory-and-port-feasibility.md`.
+
+---
+
+# 0.1 — WHY NO NEW WEAPON WAS PORTED
+
+The brief asked for one WWII weapon ported end to end. It was surveyed and is
+not doable today, for asset reasons that were verified rather than assumed:
+
+- The CoD 1.1 paks contain **no** shotgun, flamethrower, Gewehr 43, SVT-40 or
+  Maxim *def*. Every viewmodel and animation family in the paks maps onto a
+  weapon already in configstring 7 — there is no orphaned gun to adopt.
+  `weapon_browning30cal`, `weapon_russian_maxim` and `weapon_HiStandard` exist
+  as world meshes only: no def, no viewmodel, no animations.
+- The user's owned **World at War** install *does* have all of them, but its
+  assets live in `IWffu100` linked zones (readable: zlib from offset 12,
+  39 MB → 74.8 MB) containing **xmodel v16/v18**. This engine's parser handles
+  **v14 only**. That is a second asset pipeline, not a converter.
+- The user's owned **Enemy Territory** install has `k43.weap` and
+  `flamethrower.weap`, but ET's geometry is `.mdc` (Quake-derived) and its
+  weapons are a different schema entirely.
+
+So Phase 3 is blocked on assets and Phase 4 became the work. Full detail,
+reproduction commands and the ranked gap list are in
+`docs/research/weapon-inventory-and-port-feasibility.md`. **Do not re-survey
+this**; if the arsenal is to grow, the cheap route is licence-clean v14 assets,
+and the expensive one is writing the WaW v16/v18 zone reader as its own project.
+
+The current arsenal, for the record: 2 pistols, 8 SMGs, 9 rifles, 3 snipers,
+1 MG, 2 launchers, 4 grenades, and **no shotgun and no flamethrower**.
 
 ---
 
@@ -631,31 +667,139 @@ profile it was never written for.
 
 ## 17. NEXT SESSION
 
-**Fix TDM on `mp_toccoa`.** It is the one known-broken thing in an otherwise
-working build, it is narrow, and everything else is already proven tonight. The
-question to answer first: does the fix belong in `tools/toccoa/layout.py` (emit
-the team spawn classes TDM expects) or in the server (accept DM spawns under TDM
-the way retail does)? Compare a retail TDM map's entity list against ours to
-decide.
+**Superseded 2026-10-05 — do not fix TDM on `mp_toccoa` today.** The direction
+changed: `mp_toccoa` is a dev-only map and TDM on it is explicitly out of scope.
+Its source, tooling and launcher are untouched; only its priority is.
 
-Once TDM runs, the next candidates, in order:
+### Where each phase stands
 
-1. **Quake movement extensions**, additive behind cvars with the recovered retail
-   constants as the default. The obstacle course is purpose-built for it.
-2. **Toccoa visual polish** — texture scale, sign placement, tower stairs. All
-   three are unverified guesses waiting on a human eye.
-3. **Bots pathfinding** instead of bearing + jitter, which is the map's biggest
-   remaining gameplay weakness.
-4. **Create-a-Class foundation** (no perks).
+| Phase | Status |
+|---|---|
+| 1. Weapon inventory | **done** — full table in §0.1 and the research doc |
+| 2. Port feasibility | **done** — every candidate blocked on assets; conclusion recorded |
+| 3. Port one weapon | **blocked** on assets, not on effort. Do not retry without licence-clean v14 assets |
+| 4. Create-a-Class | **core done and unit-verified**; not yet proven in a live match (see §16.1) |
+| 5. Scoreboard / stats | not started |
+| 6. Killstreaks | not started |
+| 7. Killcam | not started (existing `crates/server/tests/killcam.rs` is the prior art) |
+
+### The concrete next task
+
+**Prove Create-a-Class in a running match, then commit that as the feature
+checkpoint.** Specifically:
+
+1. Start the server with `--classes-dir assets/classes` on a **stock** map
+   (`mp_carentan dm`), drop a `vcod.txt` profile into that directory naming a
+   Thompson class, and connect the real client. Confirm the player spawns
+   holding the Thompson and not the carbine. This is the one thing the class
+   system still needs — everything below it is covered by tests.
+2. Then pick the class with a UI affordance. Right now a class is chosen by
+   which file the player's name matches, which is server-driven and works, but
+   a client-side menu is the real feature. `ScriptRuntime` already has
+   `give_weapon_with_ammo` and the spawn hook; the missing piece is the menu and
+   a way to save.
+3. After that, **Phase 5 (scoreboard and player stats)** is the highest-value
+   unblocked work, and it feeds killstreaks directly.
+
+Phase 4's remaining scope, in order: client-side class menu and saving, then
+perks doing something (the slots are parsed and validated but are inert), then
+XP/unlocks — which must **not** be built yet.
 
 ---
 
-## 18. ET INVENTORY — investigated, conclusion: no firearms
+## 16.1 — CREATE-A-CLASS: WHAT IS BUILT AND WHAT IS PROVEN
 
-Full findings in `docs/et-inventory.md`.
+Built this session:
 
-ET is installed (`...\Steam\steamapps\common\Wolfenstein Enemy Territory`,
-3763 entries: 1167 sounds, 961 models, 645 textures, 117 scripts).
+| File | What |
+|---|---|
+| `crates/common/src/classes.rs` | Profile/class data model and the line-based text parser. 7 unit tests |
+| `crates/server/src/classes.rs` | Profile store, name-keyed lookup, weapon/perk validation against the live table, loadout resolution. 9 unit tests |
+| `assets/classes/default.txt` | The embedded default profile: Rifleman, Assault, Support |
+| `ScriptRuntime::apply_loadout` | Takes the stock loadout (`TakeAll`) then gives the class's weapons, primary as spawn weapon |
+| `Server::load_classes` / `--classes-dir` | Profile directory wiring; a missing directory is not an error |
+
+Design decisions, so they are not relitigated:
+
+- **Server-authoritative.** A class names weapons by string; the server resolves
+  each against its own weapon table and hands out only what resolves. A client
+  cannot request a weapon the server will not give it.
+- **Fails safe.** An unknown weapon is dropped and the slot is logged, not
+  trusted and not fatal; the rest of the class still applies. This is what makes
+  a profile written against a different build playable rather than broken.
+- **Hand-editable line format, not JSON/TOML**, matching the engine's existing
+  tokenizer style.
+- **Applied after the spawn pass, before the weapon mirror** — so the spawn's
+  playerstate reset cannot wipe the clips just written, and the frame's snapshot
+  already carries the class.
+- **Perks are validated but inert.** Names are checked against `KNOWN_PERKS`
+  and unknown ones are reported. No perk effect is implemented. Deliberate.
+
+Proven by tests:
+
+- Profile parsing, case-insensitive lookup, per-name resolution — 9 server + 7
+  common unit tests, all passing.
+- **`apply_loadout` against the real retail weapon table**: the class's three
+  weapons are held, the stock carbine is taken, its ammo array is cleared, the
+  Thompson's own reserve and full clip are written, and the primary becomes the
+  spawn weapon (`script.rs`,
+  `a_loadout_replaces_the_stock_weapons_and_ammo`).
+
+**Not proven: a live match.** The end-to-end tests in
+`crates/server/tests/classes.rs` currently *skip*, because on this machine the
+merged CoD1+UO install's `dm.gsc` never gets a client past the team menu — see
+§16.2. They will run on an asset set that spawns. The unit test above is the
+reason the loadout logic is trustworthy in the meantime.
+
+## 16.2 — A PRE-EXISTING FAILURE BLOCKS LIVE-SPAWN TESTING
+
+`cargo test --release -p vcod-server` reports **4 failures** when run with
+`COD_DIR` pointed at this machine's install. They are **not** regressions: the
+same 4 fail at the clean checkpoint `ad32f34`, and with no `COD_DIR` the suite
+is **514 passed, 0 failed** exactly as §16 records.
+
+- `game::hitrig::the_stock_assembly_has_a_hittable_head` reads **5** hittable
+  heads where the fixture expects 4 — the merged install's player model has an
+  extra head bone that CoD 1.1 alone does not.
+- `game::combat::the_stock_weapons_means_of_death_is_the_files_rifle_bullet`,
+  `a_body_in_the_line_shields_a_blast…` and
+  `game::script::the_bootstrap_precaches_the_russian_team_menu_on_mp_pavlov`
+  fail alongside them.
+
+The visible symptom for class testing: a joined client sits at `pm_type` 4
+(pre-spawn freeze) with `weapon` 0 forever, because **the weapon menu never
+opens** — the team menu is answered and then nothing spawns it. All 12
+`combat.rs` integration tests fail the same way. `Join::findings()` reports it
+directly: `"no weapon menu opened, so the client never spawned"`.
+
+This install is CoD 1.1 with UO merged in, and `main/pak8.pk3` and `pak9.pk3`
+carry **different** `maps/MP/gametypes/dm.gsc` (29,387 vs 29,281 bytes). The
+handoff's 514/0 was almost certainly recorded against a different asset set.
+
+Worth fixing, because it is what blocks live-spawn verification of every
+multiplayer feature from here on — Create-a-Class, scoreboard, killstreaks.
+Either point `COD_DIR` at a stock 1.1 install, or find which pak's `dm.gsc` the
+engine should be reading. **Do not "fix" the four tests by loosening their
+assertions**: they encode retail numbers and are right about a stock install.
+
+---
+
+## 18. ET INVENTORY — investigated; the firearms are there, the format is not
+
+Full findings in `docs/et-inventory.md`. **Superseded in part on
+2026-10-05 — see §0.1.** The section below originally concluded ET held no
+firearms worth having. That was wrong on one point and it matters: **ET does
+have a Gewehr 43 (`k43.weap`) and a flamethrower (`flamethrower.weap`)**, both
+genuinely absent from CoD 1.1, and both on the "should we have this" list in
+§0.1. The *conclusion* stands anyway, for a different reason: ET's `.mdc`
+geometry and `.weap` schema are unrelated to CoD 1.1's xmodel/weapon-def
+pipeline, so neither is importable without writing a converter plus a
+viewmodel, for one gun each.
+
+Keeping this section because the format reasoning is sound and worth not
+rediscovering. ET is installed (`...\Steam\steamapps\common\Wolfenstein
+Enemy Territory`, 3763 entries: 1167 sounds, 961 models, 645 textures, 117
+scripts).
 
 **It shares no weapon format with CoD1.** ET weapons are `.mdc` meshes with
 `.weap` text definitions (Quake II / RTCW lineage); CoD1 weapons are `.xmodel`
