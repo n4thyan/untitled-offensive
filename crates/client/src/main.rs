@@ -1380,14 +1380,25 @@ impl App {
                 KeyCode::KeyW => cac.cycle_choice(-1),
                 KeyCode::KeyS => cac.cycle_choice(1),
                 KeyCode::Enter => {
+                    // A cleared cell sends "-", so a slot the player emptied
+                    // reaches the server as a clear rather than as a weapon
+                    // literally named "-".
                     if let Some((slot, value)) = cac.commit() {
-                        log::info!("classes: {slot} = {value}");
+                        let cmd = format!("class {slot} {value}");
+                        log::info!("classes: {cmd}");
+                        net.send_reliable(&cmd);
                     }
                 }
                 KeyCode::Backspace => {
                     if let Some((slot, _)) = cac.clear() {
-                        log::info!("classes: cleared {slot}");
+                        let cmd = format!("class {slot} -");
+                        log::info!("classes: {cmd}");
+                        net.send_reliable(&cmd);
                     }
+                }
+                KeyCode::Tab => {
+                    net.send_reliable("saveclass");
+                    log::info!("classes: saveclass");
                 }
                 _ => return false,
             }

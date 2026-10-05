@@ -127,6 +127,10 @@ pub struct Classes {
     active: BTreeMap<String, usize>,
     /// The embedded default, used for a name with no file.
     default: Profile,
+    /// Where `save` writes, when the server was given a classes dir. Kept
+    /// here rather than on the server so there is one answer to "where do
+    /// profiles live", not two that can disagree.
+    dir: Option<PathBuf>,
 }
 
 impl Default for Classes {
@@ -140,6 +144,7 @@ impl Classes {
     /// A directory that does not exist is normal, not an error: it means
     /// nobody has authored a profile yet and everyone gets the default.
     pub fn new(dir: Option<&Path>) -> Classes {
+        let dir_owned = dir.map(Path::to_path_buf);
         let mut problems = Vec::new();
         let default = Profile::parse(DEFAULT_PROFILE, &mut problems);
         for p in &problems {
@@ -149,11 +154,18 @@ impl Classes {
             profiles: BTreeMap::new(),
             active: BTreeMap::new(),
             default,
+            dir: dir_owned,
         };
         if let Some(dir) = dir {
             classes.load_dir(dir);
         }
         classes
+    }
+
+    /// Where [`Self::save`] writes, or `None` when the server was started
+    /// without a classes dir.
+    pub fn dir(&self) -> Option<&Path> {
+        self.dir.as_deref()
     }
 
     /// Scan a directory of `*.txt` profiles. Sorted by filename so a load is
@@ -281,7 +293,19 @@ impl Classes {
     /// Returns the path written. The name is sanitized to a filename: a
     /// profile is keyed by a client-supplied connect name, and that name is
     /// never allowed to reach the filesystem unfiltered.
-    pub fn save(&self, name: &str, dir: &Path) -> std::io::Result<std::path::PathBuf> {
+    /// Write a profile into the dir the server was started with.
+    pub fn save(&self, name: &str) -> std::io::Result<PathBuf> {
+        let dir = self.dir().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no classes dir on this server",
+            )
+        })?;
+        self.save_to(name, dir)
+    }
+
+    /// Write a profile into an explicit dir.
+    pub fn save_to(&self, name: &str, dir: &Path) -> std::io::Result<PathBuf> {
         let key = sanitize_filename(name);
         let Some(profile) = self.profiles.get(&name.to_ascii_lowercase()) else {
             return Err(std::io::Error::new(
@@ -646,10 +670,10 @@ mod tests {
     fn a_saved_profile_round_trips() {
         let dir = std::env::temp_dir().join("vcod-class-save-test");
         let _ = std::fs::remove_dir_all(&dir);
-        let mut c = Classes::new(None);
+        let mut c = Classes::new(Some(&dir));
         c.set_slot("round trip/../evil", ClassSlot::Primary, "m1garand_mp");
         c.set_slot("round trip/../evil", ClassSlot::Secondary, "colt_mp");
-        let path = c.save("round trip/../evil", &dir).expect("save");
+        let path = c.save("round trip/../evil").expect("save");
         assert!(path.starts_with(&dir), "{path:?} escaped {dir:?}");
         assert!(path.extension().is_some_and(|e| e == "txt"));
         let text = std::fs::read_to_string(&path).unwrap();

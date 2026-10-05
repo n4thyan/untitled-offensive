@@ -389,7 +389,9 @@ pub fn build(
         (None, false) if !view.is_playable() => {
             "Needs a primary or secondary to spawn with.".to_string()
         }
-        (None, false) => "Arrows move  Enter take  Backspace clear  Tab save".to_string(),
+        (None, false) => {
+            "Arrows move  W/S choose  Enter take  Bksp clear  Tab save  Esc close".to_string()
+        }
     };
     font::layout(
         font,

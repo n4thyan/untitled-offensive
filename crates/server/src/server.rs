@@ -20,6 +20,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, SocketAddr};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
+use vcod_common::classes::ClassSlot;
 use vcod_common::movetrace::CONTENTS_CORPSE;
 use vcod_common::net::connectionless::{build_oob, parse_connect, parse_oob, Info};
 use vcod_common::net::gamestate::{self, Gamestate};
@@ -1567,6 +1568,55 @@ impl Server {
             "score" => {
                 let text = self.scoreboard();
                 self.send_server_command(slot, &text);
+            }
+            // A Create-a-Class edit. **vcod's own command**, not a retail one:
+            // retail edited classes in a client-side config the server never
+            // saw, which cannot work when the server owns the loadout.
+            //
+            //   class <slot> <value>
+            //
+            // The profile is keyed by the *server's* name for this client, so
+            // a client cannot edit anyone else's class by claiming a name.
+            // The value is sanitized by `set_slot` and validated against the
+            // weapon table at spawn, so a nonsense weapon fails there rather
+            // than being stored as a playable loadout.
+            "class" => {
+                let mut it = args.split_whitespace();
+                let (Some(slot_name), Some(value)) = (it.next(), it.next()) else {
+                    log::debug!("client {slot}: class needs a slot and a value");
+                    return true;
+                };
+                if it.next().is_some() {
+                    log::debug!("client {slot}: class takes exactly two arguments");
+                    return true;
+                }
+                let Some(class_slot) = ClassSlot::from_key(slot_name) else {
+                    log::debug!("client {slot}: unknown class slot {slot_name:?}");
+                    return true;
+                };
+                let Some(name) = self.clients[slot].as_ref().map(|c| c.name.clone()) else {
+                    return true;
+                };
+                if value.is_empty() || value == "-" {
+                    // "-" clears the slot, so a value is never a bare dash
+                    // trying to be both.
+                    self.classes.set_slot(&name, class_slot, "");
+                } else if self.classes.set_slot(&name, class_slot, value) {
+                    log::info!("classes: {name:?} {slot_name} = {value}");
+                } else {
+                    log::warn!("classes: {name:?} rejected {slot_name} = {value:?}");
+                }
+            }
+            // Writes the client's profile to the classes dir, so an edit
+            // survives the server. vcod's own, for the same reason.
+            "saveclass" => {
+                let Some(name) = self.clients[slot].as_ref().map(|c| c.name.clone()) else {
+                    return true;
+                };
+                match self.classes.save(&name) {
+                    Ok(path) => log::info!("classes: saved {name:?} to {}", path.display()),
+                    Err(e) => log::warn!("classes: save {name:?}: {e}"),
+                }
             }
             // `Cmd_Kill_f`: the same death `self suicide()` gives, asked for
             // by the client. The retail hit capture's death half is this

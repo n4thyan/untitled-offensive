@@ -947,6 +947,57 @@ evidence. Please check:
 
 ---
 
+## 19b. STATE AS OF `52e9619`
+
+The user has now played a live `mp_carentan` match and confirmed by eye:
+Carentan renders first-person, the authored Thompson class applies
+(30/360, Full_Auto), bots can be killed, the player can be killed, Tab
+opens a scoreboard, and **the killcam shows the killer's POV and their
+weapon**.
+
+Six bugs came out of that play session, all of the same shape - a value
+retail supplies that we were reading as absent:
+
+- `scr_killcam` and `scr_forcerespawn` were both missing from the engine
+  cvar table, so `dm.gsc`'s killcam branch was unreachable and every death
+  respawned immediately. (There is no code path that showed a *wrong*
+  killcam; there was no killcam.)
+- `Localized::translate` required a leading `@`, but `setText`
+  configstrings the reference bare, so every localized HUD element drew as
+  its own key. `translate_binds` had the same bug independently, which is
+  why the prompt took two commits to fix.
+- The viewmodel rig was gated on `!following`, so the killcam had a camera
+  and no weapon in it.
+
+`docs/protocol-1.1.md` now carries a "vcod additions to the input bits"
+section, because sprint is **new mechanics, not a port**: CoD 1 has one move
+speed, the capture found no walk or sprint bit, and retail's own
+`default_mp.cfg` binds `SHIFT "+melee"`. Sprint took `buttons` `0x04` (the
+one bit the capture proved unused) and `SCALE_SPRINT = 1.5` is **chosen by
+feel, not measured**. It is labelled that way in the source and the docs.
+
+### Verified this session
+- Workspace: **1789 passed, 0 failed.** The viewmodel bind-pose test that
+  was parked for several checkpoints now passes as well.
+- Not verified by eye: sprint, the V melee bind, the G grenade alias, and
+  the Create-a-Class screen. All are unit-tested and built, but the user has
+  not played them yet. Do not claim them as working in the game.
+
+### What Create-a-Class still needs
+The screen (`crates/client/src/hud/createaclass.rs`) and the server's edit
+and save path (`Classes::set_slot` / `Classes::save`) both exist and are
+tested. What is **not** wired is the round trip:
+
+- the client has no copy of its own profile, because nothing sends one down,
+  so opening the screen starts blank. `CreateAClass::load` and `to_class`
+  are the marked landing points.
+- pressing Enter logs the change (`classes: primary = thompson_mp`) but
+  sends no command to the server, so an edit does not yet reach
+  `set_slot`.
+- no save key, and the pause menu and map selector are not built.
+
+---
+
 ## 20. FILE INDEX
 
 | Path | What |
