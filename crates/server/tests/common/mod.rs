@@ -799,6 +799,24 @@ pub fn captured_join(map: &str, gametype: &str) -> (String, String) {
     )
 }
 
+/// The first configstring of the server's menu range, `CsRange::Menu`'s lower
+/// bound (1180). Duplicated here rather than imported because `CsRange` lives
+/// in the server crate and this harness is the client's side of the wire: the
+/// client only ever sees the configstrings, and reading them by the published
+/// bound is what a real client does.
+const CS_MENU_START: usize = 1180;
+
+/// The menu name configstring `idx` names, or `None` when the index is outside
+/// the range or the slot is empty.
+fn menu_name_from_configstrings(cs: &[String], idx: i32) -> Option<String> {
+    if idx < 0 {
+        return None;
+    }
+    let at = CS_MENU_START.checked_add(idx as usize)?;
+    let name = cs.get(at)?.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 // ------------------------------------------------------------------- the join
 
 /// The fixture header's "3 s after the weapon menu was answered".
@@ -812,9 +830,16 @@ pub struct Join {
     weapon: String,
     main_menu: String,
     answered: Vec<i32>,
+    /// What each menu index actually named, learned from the `g_scriptMainMenu`
+    /// the server sends with each `t`. Keyed by index because the cvar and the
+    /// index can disagree (see `on_server_command`).
+    menu_by_index: BTreeMap<i32, String>,
     answered_team: bool,
     answered_weapon_at: Option<Instant>,
     log: Vec<String>,
+    /// `index -> menu name -> reply` as the join worked it out, appended as
+    /// each menu is answered.
+    menu_log: Vec<String>,
 }
 
 impl Join {
@@ -824,9 +849,11 @@ impl Join {
             weapon: weapon.to_string(),
             main_menu: String::new(),
             answered: Vec::new(),
+            menu_by_index: BTreeMap::new(),
             answered_team: false,
             answered_weapon_at: None,
             log: Vec::new(),
+            menu_log: Vec::new(),
         }
     }
 
@@ -863,8 +890,36 @@ impl Join {
                 if self.answered.contains(&idx) {
                     return;
                 }
-                let menu = self.main_menu.clone();
-                let reply = if menu.starts_with("team_") {
+                // What this index actually names, read off the client's own
+                // copy of the server's menu configstrings. That is the
+                // authoritative answer; `g_scriptMainMenu` is only a cvar the
+                // script sets nearby and can disagree.
+                if let Some(name) = menu_name_from_configstrings(cl.configstrings(), idx) {
+                    self.menu_by_index.insert(idx, name);
+                } else {
+                    self.menu_by_index.insert(idx, self.main_menu.clone());
+                }
+                // Which menu an index names comes from the gametype's
+                // `precacheMenu` order, NOT from `g_scriptMainMenu`: CoD 1.5's
+                // `ClientBegin` precaches `serverinfo_<gametype>` first, opens
+                // it while `g_scriptMainMenu` still reads `team_*`, and only
+                // opens `menu_team` after the client answers `"close"` to it
+                // (1.5's `dm.gsc`, the `skipserverinfo` branch). Base 1.1 has
+                // no serverinfo menu and goes straight to the team menu.
+                //
+                // Answering 1.5's index 0 as if it were the team menu is what
+                // made every joined client sit a spectator for the whole map
+                // against a 1.5 gametype script. `join` records the menu each
+                // index turned out to be, so this reads the server's own
+                // answer rather than the cvar the script set alongside it.
+                let menu = self
+                    .menu_by_index
+                    .get(&idx)
+                    .cloned()
+                    .unwrap_or_else(|| self.main_menu.clone());
+                let reply = if menu.starts_with("serverinfo") {
+                    "close".to_string()
+                } else if menu.starts_with("team_") {
                     self.team.clone()
                 } else if menu.starts_with("weapon_") {
                     self.weapon.clone()
@@ -875,6 +930,8 @@ impl Join {
                 let weapon_menu = menu.starts_with("weapon_");
                 self.send_answer(cl, now, idx, &reply, weapon_menu);
                 self.answered.push(idx);
+                self.menu_log
+                    .push(format!("menu {idx} = {menu:?} -> {reply}"));
                 self.log
                     .push(format!("answered menu {idx} ({menu}) with {reply}"));
             }
@@ -888,6 +945,8 @@ impl Join {
     pub fn reset_menus(&mut self) {
         self.main_menu.clear();
         self.answered.clear();
+        self.menu_by_index.clear();
+        self.menu_log.clear();
         self.answered_team = false;
         self.answered_weapon_at = None;
     }
@@ -895,6 +954,12 @@ impl Join {
     pub fn settled(&self, now: Instant) -> bool {
         self.answered_weapon_at
             .is_some_and(|t| now.duration_since(t) >= SPAWN_SETTLE)
+    }
+
+    /// The menus the join saw, for a failure message: each index with the menu
+    /// name the server's own configstrings gave it, and the reply sent.
+    pub fn menu_trace(&self) -> Vec<String> {
+        self.menu_log.clone()
     }
 
     /// What the join did, for a failure message.
