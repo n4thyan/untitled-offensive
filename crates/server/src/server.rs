@@ -1607,6 +1607,38 @@ impl Server {
                     log::warn!("classes: {name:?} rejected {slot_name} = {value:?}");
                 }
             }
+            // `selectclass <index>`: the class picker's answer. The choice is
+            // queued and applies at the *next* spawn, so a player who opens the
+            // picker while alive cannot swap loadouts mid-life - the exploit
+            // the old B-key editor allowed. `Classes::take_pending` drains it
+            // at spawn.
+            //
+            // The index is validated against the server's copy of the profile,
+            // so a client cannot name a class that does not exist.
+            "selectclass" => {
+                let Some(index) = args.trim().parse::<usize>().ok() else {
+                    log::debug!("client {slot}: selectclass needs an index");
+                    return true;
+                };
+                let Some(name) = self.clients[slot].as_ref().map(|c| c.name.clone()) else {
+                    return true;
+                };
+                // A name with no file of its own is shown the embedded default
+                // (see `send_profile`), so picking a class from it has to
+                // materialise a profile of its own - otherwise the choice would
+                // be validated against classes the player does not own and
+                // silently never apply. Picking a class is the commitment that
+                // creates the profile.
+                if !self.classes.has_profile(&name) {
+                    let default = self.classes.default_profile().clone();
+                    self.classes.insert(&name, default);
+                }
+                if self.classes.queue_active(&name, index) {
+                    log::info!("classes: {name:?} queued class {index} for the next spawn");
+                } else {
+                    log::warn!("classes: {name:?} selectclass {index} is out of range");
+                }
+            }
             // Writes the client's profile to the classes dir, so an edit
             // survives the server. vcod's own, for the same reason.
             "saveclass" => {
@@ -3180,6 +3212,38 @@ impl Server {
         if let Some(rt) = self.script.as_mut() {
             rt.push_client_event(ClientEvent::Begin(slot));
         }
+        // The client's own profile, so Create-a-Class opens on what the player
+        // actually saved. Sent after the begin event: this is the first moment
+        // the client is in the world and reading server commands.
+        self.send_profile(slot);
+    }
+
+    /// Hand a client its authoritative profile over the command stream, so
+    /// Create-a-Class can show the saved classes instead of a blank grid.
+    ///
+    /// The client's copy is a view of the server's, never a second truth: the
+    /// server keeps the profile and a client edit is a request that lands back
+    /// in `Classes` before it is ever echoed down again.
+    fn send_profile(&mut self, slot: usize) {
+        let is_bot = self.clients[slot].as_ref().is_some_and(|c| c.is_bot);
+        if is_bot {
+            return;
+        }
+        let Some(name) = self.clients[slot].as_ref().map(|c| c.name.clone()) else {
+            return;
+        };
+        // A name with no profile of its own is told about the embedded default,
+        // because that is what the server would spawn it with. Showing an empty
+        // grid for a name that will spawn with the default loadout would be a
+        // lie about the player's own state.
+        let profile = if self.classes.has_profile(&name) {
+            self.classes.profile(&name).clone()
+        } else {
+            self.classes.default_profile().clone()
+        };
+        for cmd in vcod_common::classes::wire::encode(&profile) {
+            self.send_server_command(slot, &cmd);
+        }
     }
 
     pub fn tick(&mut self, now: Instant) {
@@ -3403,6 +3467,11 @@ impl Server {
                     Some(c) => c.name.clone(),
                     None => continue,
                 };
+                // A class picked while alive lands here, on the life it was
+                // chosen for and not before.
+                if self.classes.take_pending(&name) {
+                    log::info!("classes: {name:?} applied its queued class at spawn");
+                }
                 let chosen = Some(rt.client_weapons(slot).current as usize);
                 let Some(loadout) = self.classes.loadout_for(&name, &weapons, chosen) else {
                     continue;

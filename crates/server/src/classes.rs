@@ -125,6 +125,10 @@ pub struct Classes {
     /// `Profile` because it is a per-server choice (which class a player is
     /// running right now), not part of the saved data.
     active: BTreeMap<String, usize>,
+    /// A class chosen while alive, waiting for the next spawn. Draining this at
+    /// spawn is what makes "change class" a next-life action rather than a
+    /// live weapon swap.
+    pending: BTreeMap<String, usize>,
     /// The embedded default, used for a name with no file.
     default: Profile,
     /// Where `save` writes, when the server was given a classes dir. Kept
@@ -153,6 +157,7 @@ impl Classes {
         let mut classes = Classes {
             profiles: BTreeMap::new(),
             active: BTreeMap::new(),
+            pending: BTreeMap::new(),
             default,
             dir: dir_owned,
         };
@@ -216,6 +221,11 @@ impl Classes {
         self.profiles.insert(key.to_ascii_lowercase(), profile);
     }
 
+    /// The embedded default profile, for a name with no file of its own.
+    pub fn default_profile(&self) -> &Profile {
+        &self.default
+    }
+
     /// The profile for a client name, or the embedded default. The lookup is
     /// case-insensitive: a client's name is display text, not an identifier.
     pub fn profile(&self, name: &str) -> &Profile {
@@ -226,6 +236,41 @@ impl Classes {
 
     pub fn has_profile(&self, name: &str) -> bool {
         self.profiles.contains_key(&name.to_ascii_lowercase())
+    }
+
+    /// Queue a class to be applied at the next spawn, and return whether the
+    /// index names a real class.
+    ///
+    /// This is the alive-player path: a player who opens the class picker
+    /// mid-life has their choice recorded here and it takes effect when
+    /// `take_pending` is drained at the next spawn. It is deliberately
+    /// separate from [`Self::set_active`], which applies immediately, so a
+    /// live player cannot swap loadouts by picking a different class.
+    pub fn queue_active(&mut self, name: &str, index: usize) -> bool {
+        let key = name.to_ascii_lowercase();
+        let n = self
+            .profiles
+            .get(&key)
+            .unwrap_or(&self.default)
+            .classes
+            .len();
+        if index >= n {
+            return false;
+        }
+        self.pending.insert(key, index);
+        true
+    }
+
+    /// Apply the queued class, if any, and report whether the active class
+    /// changed. Called at spawn, so a choice made while alive lands on the
+    /// next life and not the current one.
+    pub fn take_pending(&mut self, name: &str) -> bool {
+        let key = name.to_ascii_lowercase();
+        let Some(index) = self.pending.remove(&key) else {
+            return false;
+        };
+        self.active.insert(key, index);
+        true
     }
 
     /// Which class a profile is running. 0 when unknown, and clamped to the
@@ -661,6 +706,86 @@ mod tests {
         assert_eq!(
             c.profile("newbie").classes[0].get(ClassSlot::Primary),
             Some("thompson_mp")
+        );
+    }
+
+    /// A class chosen while alive is queued, not applied: this is the exploit
+    /// guard. `queue_active` must not change what the current life spawns
+    /// with, and only a spawn's `take_pending` may.
+    #[test]
+    fn a_class_queued_while_alive_applies_only_at_the_next_spawn() {
+        let mut c = Classes::new(None);
+        let mut a = Class::new("First");
+        a.set(ClassSlot::Primary, "m1garand_mp");
+        let mut b = Class::new("Second");
+        b.set(ClassSlot::Primary, "thompson_mp");
+        c.insert(
+            "nathan",
+            Profile {
+                name: "Nathan".into(),
+                classes: vec![a, b],
+            },
+        );
+        let t = table(&["m1garand_mp", "thompson_mp"]);
+        assert_eq!(c.active_index("nathan"), 0);
+
+        // The choice is queued, and the live class is untouched.
+        assert!(c.queue_active("nathan", 1));
+        assert_eq!(
+            c.active_index("nathan"),
+            0,
+            "queueing must not swap the live loadout"
+        );
+        assert_eq!(
+            c.loadout_for("nathan", &t, None).unwrap().primary.as_deref(),
+            Some("m1garand_mp"),
+            "the current life keeps its weapon"
+        );
+
+        // The spawn drains the queue and the new class applies.
+        assert!(c.take_pending("nathan"));
+        assert_eq!(c.active_index("nathan"), 1);
+        assert_eq!(
+            c.loadout_for("nathan", &t, None).unwrap().primary.as_deref(),
+            Some("thompson_mp")
+        );
+        // Drained once: a second spawn does not re-apply anything.
+        assert!(!c.take_pending("nathan"));
+    }
+
+    /// Queueing an index that names no class is refused, so a client cannot
+    /// ask for a class the server does not have.
+    #[test]
+    fn queueing_an_out_of_range_class_is_refused() {
+        let mut c = Classes::new(None);
+        let mut a = Class::new("Only");
+        a.set(ClassSlot::Primary, "m1garand_mp");
+        c.insert(
+            "nathan",
+            Profile {
+                name: "Nathan".into(),
+                classes: vec![a],
+            },
+        );
+        assert!(!c.queue_active("nathan", 1));
+        assert!(!c.take_pending("nathan"), "nothing was queued");
+        assert_eq!(c.active_index("nathan"), 0);
+    }
+
+    /// A name that only ever saw the embedded default still gets the default
+    /// profile's classes, so `selectclass` on a fresh client names something
+    /// real. This is what `send_profile` shows it, and the picker must agree.
+    #[test]
+    fn a_fresh_name_is_shown_the_default_profiles_classes() {
+        let c = Classes::new(None);
+        assert!(!c.has_profile("stranger"));
+        let default = c.default_profile();
+        assert!(!default.classes.is_empty(), "the default is playable");
+        // The default's first class is what `profile()` resolves for a name
+        // with no file, so the two views agree.
+        assert_eq!(
+            c.profile("stranger").classes.len(),
+            default.classes.len()
         );
     }
 

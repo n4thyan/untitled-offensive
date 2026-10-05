@@ -9,6 +9,8 @@ pub mod classes;
 pub mod collision;
 pub mod game_dir;
 pub mod localize;
+pub mod maplist;
+pub mod mapvote;
 pub mod menu;
 pub mod mesh;
 pub mod movetrace;
