@@ -2242,12 +2242,18 @@ mod tests {
         let Some(fs) = vcod_common::testing::game_fs() else {
             return;
         };
+        // `g_gametype` is what the script concatenates into the serverinfo
+        // menu name, so a bare `Cvars::new()` yields a menu literally named
+        // `serverinfo_`. A running server always has it set, which is what
+        // `main.rs` does from `--gametype`.
+        let mut cvars = crate::cvars::Cvars::new();
+        cvars.set("g_gametype", "dm");
         let rt = ScriptRuntime::load(
             Rc::new(fs),
             "mp_pavlov",
             "dm",
             vec![String::new(); 2048],
-            crate::cvars::Cvars::new(),
+            cvars,
             None,
             Rc::new(crate::weapons::WeaponTable::empty()),
             0,
@@ -2350,17 +2356,40 @@ mod tests {
     /// by `probe_bootstrap_matches_retail` in
     /// `crates/server/tests/semantics_ents.rs`, which drives this same
     /// bootstrap with the probe as its gametype.
+    ///
+    /// The menu indexes are the CoD 1.5 layout, because 1.5 is the `dm.gsc`
+    /// that last in the pak sort order and therefore the one that resolves.
+    /// 1.1's `precacheMenu` opened with `menu_team`; 1.5 opens with
+    /// `menu_serverinfo` and shifts every later menu down by one. Read from
+    /// the retail scripts directly:
+    ///
+    /// ```text
+    /// pak5 (1.1): 0 menu_team 1 menu_weapon_allies 2 menu_weapon_axis ...
+    /// pak9 (1.5): 0 menu_serverinfo 1 menu_team 2 menu_weapon_allies ...
+    /// ```
+    ///
+    /// The 1.5 order is not cosmetic. The server opens the `serverinfo`
+    /// menu and waits for the client's `close` response *before* opening the
+    /// team menu, so a client that identifies menus by index must see
+    /// `serverinfo` first. That is the same fact the multiplayer harness
+    /// relies on to answer the right menu.
     #[test]
     fn the_bootstrap_precaches_the_russian_team_menu_on_mp_pavlov() {
         let Some(fs) = vcod_common::testing::game_fs() else {
             return;
         };
+        // `g_gametype` is what the script concatenates into the serverinfo
+        // menu name, so a bare `Cvars::new()` yields a menu literally named
+        // `serverinfo_`. A running server always has it set, which is what
+        // `main.rs` does from `--gametype`.
+        let mut cvars = crate::cvars::Cvars::new();
+        cvars.set("g_gametype", "dm");
         let rt = ScriptRuntime::load(
             Rc::new(fs),
             "mp_pavlov",
             "dm",
             vec![String::new(); 2048],
-            crate::cvars::Cvars::new(),
+            cvars,
             None,
             Rc::new(crate::weapons::WeaponTable::empty()),
             0,
@@ -2368,8 +2397,10 @@ mod tests {
             Carry::default(),
         )
         .expect("load mp_pavlov on dm");
-        assert_eq!(rt.configstrings()[1180], "team_russiangerman");
-        assert_eq!(rt.configstrings()[1181], "weapon_russian");
+        // The 1.5 layout: serverinfo, then team, then the weapon menus.
+        assert_eq!(rt.configstrings()[1180], "serverinfo_dm");
+        assert_eq!(rt.configstrings()[1181], "team_russiangerman");
+        assert_eq!(rt.configstrings()[1182], "weapon_russian");
         assert_eq!(rt.configstrings()[21], "gfx/hud/hud@status_dead.tga");
         assert_eq!(
             rt.configstrings()[1501],

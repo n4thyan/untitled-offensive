@@ -875,17 +875,31 @@ mod tests {
             )
         };
 
-        // 18 is `gun`: the weapon tags are how the artist keeps a bullet from
-        // scoring the rifle in the hands.
-        assert_eq!(by_name(&body, "tag_weapon_right").2, 18);
-        // The thigh box runs down +X to the knee.
+        // 10 is `right_hand`, and 18 is `gun`. CoD 1.5's pak8 ships its own
+        // `xmodelparts/USAirborne3` — same 4710 bytes, different values — and
+        // pak8 is last in the pak sort order, so its copy is the one that
+        // resolves. Read straight out of it:
+        //
+        // ```text
+        // pak0 (1.1): back_up 4, tag_weapon_right 18, tag_helmet 1
+        // pak8 (1.5): back_up 5, tag_weapon_right 10, tag_helmet 2
+        // ```
+        //
+        // Both are valid CoD; the file the engine reads says 10. What matters
+        // either way is that the weapon tags never carry a hittable box (they
+        // are all-zero), so a bullet cannot score a rifle out of the hands.
+        assert_eq!(by_name(&body, "tag_weapon_right").2, 10);
+        // The thigh box runs down +X to the knee. pak8 (1.5) numbers it
+        // `0 -5.884 -4.312 .. 20.223 4.901 4.218`; pak0 (1.1) had
+        // `-2.07 -6.69 -5.04 .. 17.41 7.49 4.97`. Same bone, same code 13,
+        // a re-authored box in the later set.
         let (mins, maxs, hl) = by_name(&body, "bip01 l thigh");
         assert!(
-            mins.abs_diff_eq(Vec3::new(-2.07, -6.69, -5.04), 0.01),
+            mins.abs_diff_eq(Vec3::new(0.0, -5.884, -4.312), 0.01),
             "{mins}"
         );
         assert!(
-            maxs.abs_diff_eq(Vec3::new(17.41, 7.49, 4.97), 0.01),
+            maxs.abs_diff_eq(Vec3::new(20.223, 4.901, 4.218), 0.01),
             "{maxs}"
         );
         assert_eq!(hl, 13); // left_leg_upper

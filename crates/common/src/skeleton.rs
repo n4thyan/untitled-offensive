@@ -613,7 +613,19 @@ mod tests {
         );
 
         // bind-pose skins are identity for both models; if this fails the gun
-        // grafts at a non-identity tag
+        // grafts at a non-identity tag.
+        //
+        // KNOWN FAILING, parked, not a gameplay blocker. Reads a skin matrix of
+        // `[1 0 0; 0 1 0; 0 0 1; -9.008 1.987 7.821]` instead of identity: a
+        // real offset, not float noise. The Kar98k's own bind locals are all
+        // exactly zero in `xmodelparts/viewmodel_kar982`, so the offset comes
+        // out of `viewmodel_hands_new4` and is worth chasing separately.
+        //
+        // It does not block playing: this is the first-person *viewmodel* bind
+        // pose, and the failing assertion is about where the gun sits in the
+        // idle pose. Nothing in spawning, Create-a-Class, hit registration or
+        // the blast path reads it. It fails identically at the clean
+        // checkpoint `ad32f34`, so it is pre-existing.
         let bind_pose = PoseBuffer::new(&skel);
         for m in 0..2 {
             for sm in bind_pose.skin_matrices(&skel, m) {

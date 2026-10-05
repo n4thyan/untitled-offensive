@@ -155,11 +155,34 @@ mod tests {
             let b = &skel.bones()[skel.bone_index(name).unwrap()];
             (b.has_hit_box(), b.hit_location)
         };
+        // The head and neck boxes live in the attached `basehead2` model, not
+        // the body: on the playerbody they are all-zero, which is how the
+        // artist turns a bone off. These two are the point of the test.
         assert_eq!(of("bip01 head"), (true, 2));
         assert_eq!(of("bip01 neck"), (true, 3));
-        assert_eq!(of("back_up"), (true, 4)); // torso_upper
-        assert_eq!(of("back_low"), (true, 5)); // torso_lower
         assert_eq!(of("bip01 l thigh"), (true, 13)); // left_leg_upper
-        assert_eq!(of("tag_weapon_right"), (false, 18)); // gun, and no box
+        assert_eq!(of("bip01 l calf"), (true, 15)); // left_leg_lower
+        assert_eq!(of("bip01 l foot"), (true, 17)); // left_foot
+
+        // These read the CoD 1.5 model set, not 1.1. `docs/research/cod11-combat.md`
+        // 3.3 recorded 1.1's values out of pak0's `xmodelparts/USAirborne3`:
+        // `back_up` 4 (torso_upper) and `tag_weapon_right` 18 (gun). CoD 1.5's
+        // pak8 ships the same 4710-byte parts file with a different hit-location
+        // table, and pak8 wins the pak sort, so the file the engine reads says
+        // 5 and 10:
+        //
+        // ```text
+        // pak0 (1.1): back_up 4, back_low 5, tag_weapon_right 18
+        // pak8 (1.5): back_up 5, back_low 5, tag_weapon_right 10
+        // ```
+        //
+        // Not a parser bug: the Pk3Fs output matches pak8's central-directory
+        // CRC exactly (0x938b319b), and reading pak0's copy directly gives the
+        // documented 4 and 18. In 1.5 the whole torso is one location, the
+        // upper chest folded into `torso_lower`. The weapon tag still has no
+        // box, so a bullet cannot score a rifle out of the hands.
+        assert_eq!(of("back_up"), (true, 5)); // torso, as 1.5 codes it
+        assert_eq!(of("back_low"), (true, 5)); // torso_lower
+        assert_eq!(of("tag_weapon_right"), (false, 10)); // and no box
     }
 }

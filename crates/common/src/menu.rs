@@ -361,6 +361,10 @@ mod tests {
             .iter()
             .find(|i| i.response.as_deref() == Some("m1carbine_mp"))
             .unwrap();
-        assert_eq!(carbine.gate.as_ref().unwrap().cvar, "scr_allow_m1carbine");
+        // `ui_allow_*`, not `scr_allow_*`: CoD 1.5's pak8 ships its own
+        // `weapon_american.menu` and renames the gate, and pak8 is last in the
+        // pak sort order so its file is the one that resolves. CoD 1.1's pak0
+        // copy says `scr_allow_m1carbine`; both spellings exist in the paks.
+        assert_eq!(carbine.gate.as_ref().unwrap().cvar, "ui_allow_m1carbine");
     }
 }

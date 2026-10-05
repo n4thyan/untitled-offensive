@@ -1167,6 +1167,14 @@ mod tests {
     /// 1055}` parses back as `[32]`). The debug_assert! turns that into a
     /// loud test failure instead.
     #[test]
+    // `debug_assert!` is compiled out under `--release`, so this test can only
+    // pass in a debug profile. It is not ignored: the release suite is where
+    // `should_panic` has no way to fire, and reporting it as a failure there
+    // hides real ones.
+    #[cfg_attr(
+        not(debug_assertions),
+        ignore = "guards a debug_assert!; run this target in a debug profile"
+    )]
     #[should_panic(expected = "not below ENTITYNUM_WORLD")]
     fn write_packet_entities_rejects_a_number_at_entitynum_world() {
         let p = &PROTOCOL_V1;
@@ -1196,6 +1204,10 @@ mod tests {
     /// from the frame it sends, but `write` is the public API and shouldn't
     /// rely on being the only caller to keep that filter correct.
     #[test]
+    #[cfg_attr(
+        not(debug_assertions),
+        ignore = "guards a debug_assert!; run this target in a debug profile"
+    )]
     #[should_panic(expected = "out of the u8 wire range")]
     fn write_rejects_a_zero_delta_offset() {
         let p = &PROTOCOL_V1;

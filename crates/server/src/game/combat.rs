@@ -1055,10 +1055,17 @@ mod tests {
         let Some(fs) = vcod_common::testing::game_fs() else {
             return;
         };
+        // Read from the weapon files, not from a remembered table: the two
+        // CoD revisions disagree about the bolt-action rifles. CoD 1.1's
+        // pak0 gives `rifleBullet 0` for the Kar98k, Enfield and Mosin, and
+        // CoD 1.5's pak8 gives `rifleBullet 1` for all three. pak8 is last in
+        // the pak sort order and so is the file that resolves, which is why
+        // the three bolt actions are rifle bullet here and were not under 1.1.
+        // Nothing in the *parsing* changed between the two; only the data did.
         let want = [
-            ("kar98k_mp", "MOD_PISTOL_BULLET"),
-            ("enfield_mp", "MOD_PISTOL_BULLET"),
-            ("mosin_nagant_mp", "MOD_PISTOL_BULLET"),
+            ("kar98k_mp", "MOD_RIFLE_BULLET"),
+            ("enfield_mp", "MOD_RIFLE_BULLET"),
+            ("mosin_nagant_mp", "MOD_RIFLE_BULLET"),
             ("mp44_mp", "MOD_PISTOL_BULLET"),
             ("thompson_mp", "MOD_PISTOL_BULLET"),
             ("colt_mp", "MOD_PISTOL_BULLET"),
