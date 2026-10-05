@@ -442,6 +442,18 @@ enum Mode {
         /// The Create-a-Class screen, `None` while it is closed. Opened with
         /// B, closed with Escape or B.
         createaclass: Option<hud::createaclass::CreateAClass>,
+        /// The client-owned menu screens (main, play, pause, class picker).
+        /// While one is up it owns input: gameplay keys are not built into a
+        /// usercmd and the mouse does not turn the view.
+        screens: Box<hud::screens::Screens>,
+        /// The menu currently drawn, rebuilt whenever a screen opens or a key
+        /// moves the selection. `Screens` holds the state; this holds the
+        /// presentation the render loop reads.
+        screen_menu: Option<hud::shell::Menu>,
+        /// The server's authoritative profile, assembled as its commands
+        /// arrive. Create-a-Class and the picker read it, so neither can show
+        /// a class the server does not have.
+        profile: vcod_common::classes::wire::ProfileSync,
     },
     Walk {
         /// Boxed to keep the variants a similar size.
@@ -504,6 +516,11 @@ fn digit_slot(code: KeyCode) -> Option<usize> {
         KeyCode::Digit6 => 5,
         _ => return None,
     })
+}
+
+/// The playable maps this install offers, for the menu's map selector.
+fn maplist_for(fs: &Pk3Fs) -> vcod_common::maplist::MapRegistry {
+    vcod_common::maplist::MapRegistry::discover(fs)
 }
 
 /// Retail's `config_mp.cfg` binds for `--connect`; the mouse buttons and
@@ -901,6 +918,9 @@ fn main() -> Result<()> {
                 )),
                 menu_view: None,
                 createaclass: None,
+                screens: Box::new(hud::screens::Screens::new(maplist_for(&fs))),
+                screen_menu: None,
+                profile: vcod_common::classes::wire::ProfileSync::new(),
             },
             None,
             "vcod — connecting".to_string(),
@@ -995,6 +1015,9 @@ fn own_view(raw: [i32; 3], delta: [i32; 3]) -> (f32, f32) {
     let pitch = short(0).clamp(-PITCH_CLAMP_SHORT, PITCH_CLAMP_SHORT);
     (deg(short(1)).to_radians(), -deg(pitch).to_radians())
 }
+
+/// The key hint under a client-owned menu screen.
+const MENU_HINT: &str = "Up/Down move  Left/Right change  Enter select  Esc back";
 
 /// Retail's view pitch clamp, 87.9 degrees in short units
 /// (docs/research/cod11-gsc-object-model.md, the defender fixture's
@@ -1139,6 +1162,7 @@ fn loading_frame(
         let no_clients = BTreeMap::new();
         let f = hud::HudFrame {
             createaclass: None,
+            shell: None,
             now,
             screen_w,
             screen_h,
@@ -1307,6 +1331,12 @@ impl App {
         event_loop.exit();
     }
 
+    /// Whether Esc should open the pause menu: an online match with a live
+    /// phase (a menu over the map), not the connecting or loading screens.
+    fn pause_available(&self) -> bool {
+        matches!(&self.mode, Mode::Online { phase: Phase::Live(_), .. })
+    }
+
     fn set_grab(&mut self, grabbed: bool) {
         let Some(window) = &self.window else { return };
         if grabbed {
@@ -1357,7 +1387,14 @@ impl App {
 
     /// The open script menu's keys, ahead of every other binding, and M to
     /// open the main menu when none is. False when the key is not the menu's.
+    ///
+    /// A client-owned screen ([`hud::screens`]) is checked first: while one is
+    /// up it owns every key, so a menu keypress can never also reach a
+    /// gameplay binding.
     fn menu_key(&mut self, code: KeyCode) -> bool {
+        if self.screen_key(code) {
+            return true;
+        }
         let Mode::Online {
             net,
             join,
@@ -1448,6 +1485,162 @@ impl App {
     }
 }
 
+impl App {
+    /// Route a key to the client-owned screens, when one is up. True when the
+    /// key was consumed (or a screen was opened by it).
+    ///
+    /// The menu the key acts on is rebuilt from [`hud::screens::Screens`]
+    /// first, so a stepped value is applied to the state that is actually
+    /// held; it is then written back for the render loop to draw.
+    fn screen_key(&mut self, code: KeyCode) -> bool {
+        // M opens the main menu when nothing else owns the key. Checked before
+        // the screen arm so M is available both in game and from a screen.
+        let Mode::Online {
+            screens,
+            screen_menu,
+            net,
+            profile,
+            ..
+        } = &mut self.mode
+        else {
+            return false;
+        };
+        let key = match code {
+            KeyCode::ArrowUp => hud::screens::MenuKey::Up,
+            KeyCode::ArrowDown => hud::screens::MenuKey::Down,
+            KeyCode::ArrowLeft => hud::screens::MenuKey::Left,
+            KeyCode::ArrowRight => hud::screens::MenuKey::Right,
+            KeyCode::Enter | KeyCode::NumpadEnter => hud::screens::MenuKey::Activate,
+            KeyCode::Escape => hud::screens::MenuKey::Back,
+            _ => hud::screens::MenuKey::None,
+        };
+        if screens.captures_input() {
+            // Reuse the menu already on screen so the cursor survives across
+            // keypresses; it is rebuilt only when a screen opens (and when the
+            // class list changes, below). Rebuilding per key would reset the
+            // selection to the first row on every press.
+            let mut menu = screen_menu
+                .take()
+                .unwrap_or_else(|| screens.menu().expect("a screen is up"));
+            let (_, action) = screens.handle_key(&mut menu, key);
+            *screen_menu = Some(menu);
+            if let Some(action) = action {
+                self.run_screen_action(action);
+            }
+            return true;
+        }
+        // No screen up: M opens the main menu. B still opens the developer
+        // Create-a-Class editor directly - it is a debug shortcut now, and the
+        // normal flow is the menu's Create-a-Class row.
+        if code == KeyCode::KeyM {
+            screens.open(hud::screens::Screen::Main);
+            *screen_menu = screens.menu();
+            return true;
+        }
+        false
+    }
+
+    /// Carry out a screen's action. Split out because it needs `&mut self`
+    /// whole, while `screen_key` holds a borrow of the mode.
+    fn run_screen_action(&mut self, action: hud::screens::Action) {
+        use hud::screens::{Action, Screen};
+        match action {
+            Action::Open(screen) => {
+                if let Mode::Online {
+                    screens,
+                    screen_menu,
+                    ..
+                } = &mut self.mode
+                {
+                    screens.open(screen);
+                    *screen_menu = screens.menu();
+                }
+            }
+            Action::Close => {
+                if let Mode::Online {
+                    screens,
+                    screen_menu,
+                    ..
+                } = &mut self.mode
+                {
+                    screens.close();
+                    *screen_menu = None;
+                }
+                // A menu closing restores gameplay input cleanly: no held key
+                // stays latched and the mouse is re-captured.
+                self.set_grab(true);
+            }
+            Action::SelectClass(index) => {
+                if let Mode::Online {
+                    net,
+                    screens,
+                    screen_menu,
+                    ..
+                } = &mut self.mode
+                {
+                    // The choice is queued for the next spawn, not applied now,
+                    // and the picker closes on a pick.
+                    log::info!("classes: selectclass {index}");
+                    net.send_reliable(&format!("selectclass {index}"));
+                    screens.close();
+                    *screen_menu = None;
+                }
+                self.set_grab(true);
+            }
+            Action::OpenClassEditor => {
+                // The assembled profile, taken before the mode is borrowed
+                // mutably below.
+                let profile = match &self.mode {
+                    Mode::Online { profile, .. } => profile.profile(),
+                    _ => None,
+                };
+                if let Mode::Online {
+                    net,
+                    createaclass,
+                    screens,
+                    screen_menu,
+                    ..
+                } = &mut self.mode
+                {
+                    let mut editor = hud::createaclass::CreateAClass::from_configstrings(
+                        net.configstrings(),
+                    );
+                    // Open on the saved profile, not a blank grid: this is the
+                    // round trip the screen was missing.
+                    if let Some(profile) = &profile {
+                        editor.load(profile, editor.class_index);
+                    }
+                    *createaclass = Some(editor);
+                    screens.close();
+                    *screen_menu = None;
+                }
+            }
+            Action::LeaveMatch | Action::Quit => {
+                // No clean "leave" path yet without a socket teardown the
+                // client does not own; the honest behaviour is to return to the
+                // menu and let the player close the window. Logged so it is not
+                // silently a no-op.
+                log::info!("menu: leave requested (no disconnect path yet)");
+                if let Mode::Online {
+                    screens,
+                    screen_menu,
+                    ..
+                } = &mut self.mode
+                {
+                    screens.open(Screen::Main);
+                    *screen_menu = screens.menu();
+                }
+            }
+            Action::StartMatch { .. } | Action::Nothing => {
+                // START MATCH is wired to the launcher path in a later step;
+                // until then the row is honest about doing nothing yet.
+                log::info!("menu: start match requested (launcher path pending)");
+            }
+        }
+    }
+
+}
+
 /// A menu `execKey` name for the digit row.
 fn digit_key(code: KeyCode) -> Option<&'static str> {
     Some(match code {
@@ -1522,8 +1715,25 @@ impl ApplicationHandler for App {
                     return;
                 }
                 if code == KeyCode::Escape && pressed {
-                    self.set_grab(false);
-                    self.clear_held_keys();
+                    // In a live match Esc opens the pause menu (a multiplayer
+                    // menu overlay, not a simulation freeze). Outside one it
+                    // releases the mouse, as before.
+                    if self.pause_available() {
+                        if let Mode::Online {
+                            screens,
+                            screen_menu,
+                            ..
+                        } = &mut self.mode
+                        {
+                            screens.open(hud::screens::Screen::Pause);
+                            *screen_menu = screens.menu();
+                        }
+                        self.set_grab(false);
+                        self.clear_held_keys();
+                    } else {
+                        self.set_grab(false);
+                        self.clear_held_keys();
+                    }
                     return;
                 }
                 if code == KeyCode::F3 && pressed {
@@ -1546,7 +1756,12 @@ impl ApplicationHandler for App {
                         KeyCode::ShiftLeft => self.input.boost = pressed,
                         _ => {}
                     },
-                    Mode::Online { net, input, .. } => match code {
+                    Mode::Online {
+                        net,
+                        input,
+                        screens,
+                        ..
+                    } => match code {
                         // The server never pushes scores: send `score` on the
                         // down edge, and every 2 s while held (see the redraw
                         // tick; docs/research/cod11-hud-protocol.md, section 4).
@@ -1560,11 +1775,12 @@ impl ApplicationHandler for App {
                                 }
                             }
                         }
-                        // A press counts only while the mouse is captured; a
-                        // release always passes so nothing stays held.
+                        // A press counts only while the mouse is captured and
+                        // no menu owns input; a release always passes so nothing
+                        // stays held.
                         _ => {
                             if let Some(action) = play_action(code) {
-                                if grabbed || !pressed {
+                                if (grabbed && !screens.captures_input()) || !pressed {
                                     input.key(action, pressed);
                                 }
                             }
@@ -1626,11 +1842,19 @@ impl ApplicationHandler for App {
                         MouseButton::Right => *ads_held = pressed,
                         _ => {}
                     },
-                    Mode::Online { input, .. } => match button {
-                        MouseButton::Left => input.key(play::input::Action::Attack, pressed),
-                        MouseButton::Right => input.key(play::input::Action::Ads, pressed),
-                        _ => {}
-                    },
+                    Mode::Online { input, screens, .. } => {
+                        // A menu owns the mouse: clicks must not fire or aim.
+                        if screens.captures_input() {
+                            return;
+                        }
+                        match button {
+                            MouseButton::Left => {
+                                input.key(play::input::Action::Attack, pressed)
+                            }
+                            MouseButton::Right => input.key(play::input::Action::Ads, pressed),
+                            _ => {}
+                        }
+                    }
                     Mode::Fly(_) => {}
                 }
             }
@@ -1644,8 +1868,11 @@ impl ApplicationHandler for App {
                     Mode::Fly(cam) => cam.adjust_speed(scroll),
                     // Retail binds MWHEELDOWN to weapnext, MWHEELUP to weapprev.
                     Mode::Online {
-                        input, menu_view, ..
-                    } if grabbed && menu_view.is_none() && scroll != 0.0 => {
+                        input,
+                        menu_view,
+                        screens,
+                        ..
+                    } if grabbed && menu_view.is_none() && !screens.captures_input() && scroll != 0.0 => {
                         let action = if scroll < 0.0 {
                             play::input::Action::NextWeapon
                         } else {
@@ -1711,6 +1938,9 @@ impl ApplicationHandler for App {
                         join,
                         menu_view,
                         createaclass,
+                        screens,
+                        screen_menu,
+                        profile,
                     } => {
                         let mut vm = None;
                         let events = net.pump();
@@ -1745,6 +1975,18 @@ impl ApplicationHandler for App {
                                 }
                                 // `j/k/l` is quick chat; `s <idx>` is the announcer.
                                 net::NetEvent::ServerCommand(ref tokens) => {
+                                    // The server's profile sync. Claimed here so
+                                    // it never reaches the join state machine,
+                                    // which would only log it as unknown.
+                                    if profile.on_command(tokens) {
+                                        if let Some(p) = profile.profile() {
+                                            screens.set_classes(Some(&p));
+                                            if let Some(menu) = screens.menu() {
+                                                *screen_menu = Some(menu);
+                                            }
+                                        }
+                                        continue;
+                                    }
                                     if tokens.first().is_some_and(|t| t == "n") {
                                         join.on_restart();
                                     }
@@ -1776,6 +2018,7 @@ impl ApplicationHandler for App {
                                 }
                                 net::NetEvent::GamestateReady => {
                                     join.on_gamestate();
+                                    profile.reset();
                                     gamestate_ready = true;
                                 }
                                 _ => {}
@@ -2213,6 +2456,7 @@ impl ApplicationHandler for App {
                                         fs: &self.fs,
                                         menu: menu_view.as_ref().map(|(_, v)| v),
                                         createaclass: createaclass.as_ref(),
+                                        shell: screen_menu.as_ref().map(|m| (m, MENU_HINT)),
                                         ps: newest.map(|s| &s.ps),
                                         predicted: predicted
                                             .as_ref()
@@ -2701,7 +2945,13 @@ impl ApplicationHandler for App {
             let (dx, dy) = (dx as f32, dy as f32);
             match &mut self.mode {
                 Mode::Fly(cam) => cam.mouse_delta(dx, dy),
-                Mode::Online { input, view, .. } => {
+                Mode::Online {
+                    input, view, screens, ..
+                } => {
+                    // A menu owns input: the mouse must not turn the player.
+                    if screens.captures_input() {
+                        return;
+                    }
                     input.mouse(dx, dy);
                     view.mouse(dx, dy);
                 }

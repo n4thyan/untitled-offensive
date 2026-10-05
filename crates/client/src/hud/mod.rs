@@ -9,6 +9,8 @@ pub mod killfeed;
 pub mod menu;
 pub mod player;
 pub mod scoreboard;
+pub mod screens;
+pub mod shell;
 pub mod status;
 
 use std::collections::{BTreeMap, HashMap};
@@ -88,6 +90,10 @@ pub struct HudFrame<'a> {
     /// menu so a class edit is never hidden behind a team or weapon menu the
     /// server still has up.
     pub createaclass: Option<&'a createaclass::CreateAClass>,
+    /// A client-owned menu screen (the main menu, the pause menu, the class
+    /// picker). Drawn on top of everything, including the script menu, because
+    /// it is the thing the player is deliberately looking at.
+    pub shell: Option<(&'a shell::Menu, &'a str)>,
     /// The newest snapshot's playerstate: ours, or the followed player's.
     /// Its hudelems are drawn whoever it belongs to.
     pub ps: Option<&'a PlayerState>,
@@ -303,6 +309,19 @@ impl Hud {
                 &mut out,
             );
         }
+        // And on top of that: a client-owned screen is modal, so nothing the
+        // server drew should show through it.
+        if let Some((menu, hint)) = f.shell {
+            shell::build(
+                menu,
+                &self.font_text,
+                HUD_SCALE,
+                f.screen_w,
+                f.screen_h,
+                hint,
+                &mut out,
+            );
+        }
         out
     }
 }
@@ -408,6 +427,7 @@ mod tests {
             fs,
             menu: None,
             createaclass: None,
+            shell: None,
             ps: Some(ps),
             predicted,
             local_player: true,
