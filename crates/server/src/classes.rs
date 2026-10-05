@@ -34,24 +34,9 @@ use crate::weapons::WeaponTable;
 /// shipped copy under `assets/classes/`.
 pub const DEFAULT_PROFILE: &str = include_str!("../../../assets/classes/default.txt");
 
-/// The perk names this build knows. Nothing consumes a perk yet — this is the
-/// validation list a class is checked against so a typo is reported now and
-/// the slot is already data-driven when perks land. Kept deliberately short:
-/// three slots' worth of classic-CoD staples, no grind, no unlocks.
-pub const KNOWN_PERKS: &[&str] = &[
-    "perk_none",
-    "perk_stopping_power",
-    "perk_juggernaut",
-    "perk_sleight_of_hand",
-    "perk_steady_aim",
-    "perk_bandolier",
-    "perk_bomb_squad",
-    "perk_flak_jacket",
-    "perk_deep_impact",
-    "perk_extended_mags",
-    "perk_double_tap",
-    "perk_iron_lungs",
-];
+/// Re-exported: the perk list is shared, because the client offers exactly
+/// the perks the server will accept.
+pub use vcod_common::classes::KNOWN_PERKS;
 
 /// A class resolved against the weapon table: the names that survived
 /// validation, ready to hand the weapon builtins.
@@ -102,6 +87,34 @@ pub fn resolve(class: &Class, is_weapon: &dyn Fn(&str) -> bool) -> Loadout {
         }
     }
     out
+}
+
+/// A client-supplied profile name reduced to something safe to use as a
+/// filename.
+///
+/// The name arrives from the network in the connect string, so it is
+/// untrusted: `..\..\windows\system32` must not become a path. Anything
+/// outside `[A-Za-z0-9_-]` becomes `_`, an empty or all-underscore name
+/// falls back to `player`, and the result is length-capped so a long name
+/// cannot exceed the filesystem's own limit.
+fn sanitize_filename(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(32)
+        .collect();
+    let trimmed = cleaned.trim_matches('_');
+    if trimmed.is_empty() {
+        "player".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// The server's profile store: every profile it knows, by name, plus which
@@ -218,6 +231,68 @@ impl Classes {
             .copied()
             .unwrap_or(0)
             .min(n.saturating_sub(1))
+    }
+
+    /// The profile for `name`, or a fresh empty one the caller can edit.
+    ///
+    /// A name with no file gets a real profile rather than a borrowed
+    /// reference into the embedded default: Create-a-Class has to be able to
+    /// build a profile from nothing, and handing back `&self.default` would
+    /// quietly write one player's classes into everyone's fallback.
+    pub fn profile_mut(&mut self, name: &str) -> &mut Profile {
+        let key = name.to_ascii_lowercase();
+        self.profiles.entry(key.clone()).or_insert_with(|| Profile {
+            name: name.to_string(),
+            classes: Vec::new(),
+        })
+    }
+
+    /// Put a slot in the active class, creating the class if the profile has
+    /// none yet. `false` when the value is rejected by `sanitize_value`.
+    pub fn set_slot(&mut self, name: &str, slot: ClassSlot, value: &str) -> bool {
+        let value = vcod_common::classes::sanitize_value(value);
+        if value.is_empty() {
+            return false;
+        }
+        // Slot edits always target the active class, so a player picking a
+        // weapon is filling in the class they will spawn with. Read the index
+        // before the mutable borrow of the profile.
+        let index = self
+            .active
+            .get(&name.to_ascii_lowercase())
+            .copied()
+            .unwrap_or(0);
+        let profile = self.profile_mut(name);
+        if profile.classes.is_empty() {
+            profile.classes.push(Class::new("Custom"));
+        }
+        let index = index.min(profile.classes.len().saturating_sub(1));
+        if let Some(class) = profile.classes.get_mut(index) {
+            class.set(slot, value);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Write a profile back to `<dir>/<key>.txt`, so an edit survives the
+    /// server and the next launch reads it as an authored profile.
+    ///
+    /// Returns the path written. The name is sanitized to a filename: a
+    /// profile is keyed by a client-supplied connect name, and that name is
+    /// never allowed to reach the filesystem unfiltered.
+    pub fn save(&self, name: &str, dir: &Path) -> std::io::Result<std::path::PathBuf> {
+        let key = sanitize_filename(name);
+        let Some(profile) = self.profiles.get(&name.to_ascii_lowercase()) else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no such profile",
+            ));
+        };
+        std::fs::create_dir_all(dir)?;
+        let path = dir.join(format!("{key}.txt"));
+        std::fs::write(&path, profile.to_text())?;
+        Ok(path)
     }
 
     /// Select a class by index. Out-of-range is refused (false) rather than
@@ -501,5 +576,89 @@ mod tests {
                 .as_deref(),
             Some("sten_mp")
         );
+    }
+
+    /// A profile name arrives from the network, so it must not be able to
+    /// choose a path. These are the shapes that matter: traversal, an
+    /// absolute path, a device name, and an empty result.
+    #[test]
+    fn a_profile_name_cannot_choose_a_path() {
+        for hostile in [
+            "..\\..\\windows\\system32",
+            "../../etc/passwd",
+            "C:\\Windows\\System32",
+            "/etc/shadow",
+            "..",
+            ".",
+            "",
+            "///",
+            "con",
+        ] {
+            let out = sanitize_filename(hostile);
+            assert!(
+                out.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
+                "{hostile:?} -> {out:?} kept a filesystem-significant character"
+            );
+            assert!(
+                !out.contains(".."),
+                "{hostile:?} -> {out:?} kept a traversal"
+            );
+            assert!(!out.is_empty(), "{hostile:?} produced an empty filename");
+            assert!(out.len() <= 32, "{hostile:?} -> {out:?} is over the cap");
+        }
+        // And the ordinary case is untouched, or nobody's profile would save.
+        assert_eq!(sanitize_filename("vcod"), "vcod");
+        assert_eq!(sanitize_filename("Some Player"), "Some_Player");
+    }
+
+    /// Editing a slot creates the class and the profile if they are missing,
+    /// and it always targets the class the player will spawn with.
+    #[test]
+    fn editing_a_slot_builds_a_profile_from_nothing() {
+        let mut c = Classes::new(None);
+        assert!(!c.has_profile("newbie"), "starts with no profile");
+        assert!(c.set_slot("newbie", ClassSlot::Primary, "thompson_mp"));
+        assert!(c.has_profile("newbie"));
+        let p = c.profile("newbie");
+        assert_eq!(p.classes.len(), 1);
+        assert_eq!(p.classes[0].get(ClassSlot::Primary), Some("thompson_mp"));
+
+        // A second edit lands in the same (active) class, not a new one.
+        assert!(c.set_slot("newbie", ClassSlot::Perk1, "perk_sleight_of_hand"));
+        assert_eq!(c.profile("newbie").classes.len(), 1);
+        assert_eq!(
+            c.profile("newbie").classes[0].get(ClassSlot::Perk1),
+            Some("perk_sleight_of_hand")
+        );
+
+        // An empty value is refused rather than clearing the slot silently.
+        assert!(!c.set_slot("newbie", ClassSlot::Primary, "   "));
+        assert_eq!(
+            c.profile("newbie").classes[0].get(ClassSlot::Primary),
+            Some("thompson_mp")
+        );
+    }
+
+    /// A saved profile reads back as the same authored profile, and the file
+    /// lands under the classes dir under a sanitized name.
+    #[test]
+    fn a_saved_profile_round_trips() {
+        let dir = std::env::temp_dir().join("vcod-class-save-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut c = Classes::new(None);
+        c.set_slot("round trip/../evil", ClassSlot::Primary, "m1garand_mp");
+        c.set_slot("round trip/../evil", ClassSlot::Secondary, "colt_mp");
+        let path = c.save("round trip/../evil", &dir).expect("save");
+        assert!(path.starts_with(&dir), "{path:?} escaped {dir:?}");
+        assert!(path.extension().is_some_and(|e| e == "txt"));
+        let text = std::fs::read_to_string(&path).unwrap();
+        let mut problems = Vec::new();
+        let back = vcod_common::classes::Profile::parse(&text, &mut problems);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(back.classes.len(), 1);
+        assert_eq!(back.classes[0].get(ClassSlot::Primary), Some("m1garand_mp"));
+        assert_eq!(back.classes[0].get(ClassSlot::Secondary), Some("colt_mp"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

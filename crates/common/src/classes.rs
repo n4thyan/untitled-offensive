@@ -62,6 +62,25 @@ impl ClassSlot {
     }
 }
 
+/// The perk names this build knows. Nothing consumes a perk yet — this is the
+/// validation list a class is checked against so a typo is reported now and
+/// the slot is already data-driven when perks land. Kept deliberately short:
+/// three slots' worth of classic-CoD staples, no grind, no unlocks.
+pub const KNOWN_PERKS: &[&str] = &[
+    "perk_none",
+    "perk_stopping_power",
+    "perk_juggernaut",
+    "perk_sleight_of_hand",
+    "perk_steady_aim",
+    "perk_bandolier",
+    "perk_bomb_squad",
+    "perk_flak_jacket",
+    "perk_deep_impact",
+    "perk_extended_mags",
+    "perk_double_tap",
+    "perk_iron_lungs",
+];
+
 /// One class. Every slot is an optional *name* (a configstring-7 weapon name
 /// like `m1carbine_mp`, or a perk/item name). Names, not indices: an index is
 /// only meaningful against one build's `WEAPON_LIST`, and a profile must

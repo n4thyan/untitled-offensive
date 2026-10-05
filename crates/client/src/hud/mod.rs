@@ -2,6 +2,7 @@
 //! into the quads [`crate::renderer::Renderer::set_hud_quads`] draws.
 
 pub mod chat;
+pub mod createaclass;
 pub mod font;
 pub mod hudelem;
 pub mod killfeed;
@@ -83,6 +84,10 @@ pub struct HudFrame<'a> {
     pub fs: &'a Pk3Fs,
     /// The server's open script menu, if any; drawn on top of everything else.
     pub menu: Option<&'a menu::MenuView>,
+    /// The Create-a-Class screen, when it is open. Drawn after the script
+    /// menu so a class edit is never hidden behind a team or weapon menu the
+    /// server still has up.
+    pub createaclass: Option<&'a createaclass::CreateAClass>,
     /// The newest snapshot's playerstate: ours, or the followed player's.
     /// Its hudelems are drawn whoever it belongs to.
     pub ps: Option<&'a PlayerState>,
@@ -275,6 +280,18 @@ impl Hud {
                 &mut out,
             );
         }
+        // Also on top, and after the script menu: Create-a-Class is the thing
+        // the player is deliberately looking at.
+        if let Some(cac) = f.createaclass {
+            createaclass::build(
+                cac,
+                &self.font_text,
+                HUD_SCALE,
+                f.screen_w,
+                f.screen_h,
+                &mut out,
+            );
+        }
         // Last, so the open menu sits on top of everything else.
         if let Some(view) = f.menu {
             menu::build(
@@ -390,6 +407,7 @@ mod tests {
             snap_time: 0,
             fs,
             menu: None,
+            createaclass: None,
             ps: Some(ps),
             predicted,
             local_player: true,

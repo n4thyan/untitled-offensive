@@ -439,6 +439,9 @@ enum Mode {
         /// The open script menu as drawn, keyed by the configstring name it
         /// was built for; rebuilt when `join` opens another.
         menu_view: Option<(String, hud::menu::MenuView)>,
+        /// The Create-a-Class screen, `None` while it is closed. Opened with
+        /// B, closed with Escape or B.
+        createaclass: Option<hud::createaclass::CreateAClass>,
     },
     Walk {
         /// Boxed to keep the variants a similar size.
@@ -897,6 +900,7 @@ fn main() -> Result<()> {
                     args.weapon.clone(),
                 )),
                 menu_view: None,
+                createaclass: None,
             },
             None,
             "vcod — connecting".to_string(),
@@ -1134,6 +1138,7 @@ fn loading_frame(
         let (screen_w, screen_h) = r.screen_size();
         let no_clients = BTreeMap::new();
         let f = hud::HudFrame {
+            createaclass: None,
             now,
             screen_w,
             screen_h,
@@ -1357,17 +1362,54 @@ impl App {
             net,
             join,
             menu_view,
+            createaclass,
             ..
         } = &mut self.mode
         else {
             return false;
         };
-        let Some((_, view)) = menu_view else {
-            if code == KeyCode::KeyM {
-                join.open_main(net.configstrings());
-                return true;
+        // Create-a-Class takes priority over the script menu while it is up:
+        // arrow keys that would move a menu selection move the grid instead.
+        if let Some(cac) = createaclass.as_mut() {
+            match code {
+                KeyCode::Escape => *createaclass = None,
+                KeyCode::ArrowLeft => cac.left(),
+                KeyCode::ArrowRight => cac.right(),
+                KeyCode::ArrowUp => cac.up(),
+                KeyCode::ArrowDown => cac.down(),
+                KeyCode::KeyW => cac.cycle_choice(-1),
+                KeyCode::KeyS => cac.cycle_choice(1),
+                KeyCode::Enter => {
+                    if let Some((slot, value)) = cac.commit() {
+                        log::info!("classes: {slot} = {value}");
+                    }
+                }
+                KeyCode::Backspace => {
+                    if let Some((slot, _)) = cac.clear() {
+                        log::info!("classes: cleared {slot}");
+                    }
+                }
+                _ => return false,
             }
-            return false;
+            return true;
+        }
+        let Some((_, view)) = menu_view else {
+            // B opens and closes Create-a-Class. Retail puts the pause menu on
+            // ESC and the class screen behind a buy-menu bind; B is free here
+            // and does not collide with a movement or weapon key.
+            match code {
+                KeyCode::KeyM => {
+                    join.open_main(net.configstrings());
+                    return true;
+                }
+                KeyCode::KeyB => {
+                    *createaclass = Some(hud::createaclass::CreateAClass::from_configstrings(
+                        net.configstrings(),
+                    ));
+                    return true;
+                }
+                _ => return false,
+            }
         };
         let response = match code {
             KeyCode::Escape => {
@@ -1657,6 +1699,7 @@ impl ApplicationHandler for App {
                         phase,
                         join,
                         menu_view,
+                        createaclass,
                     } => {
                         let mut vm = None;
                         let events = net.pump();
@@ -2158,6 +2201,7 @@ impl ApplicationHandler for App {
                                             .map_or(0, |(a, _)| a.server_time),
                                         fs: &self.fs,
                                         menu: menu_view.as_ref().map(|(_, v)| v),
+                                        createaclass: createaclass.as_ref(),
                                         ps: newest.map(|s| &s.ps),
                                         predicted: predicted
                                             .as_ref()
