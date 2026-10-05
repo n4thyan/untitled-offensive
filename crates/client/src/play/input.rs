@@ -39,6 +39,8 @@ pub enum Action {
     Melee,
     Use,
     Reload,
+    /// vcod addition, not a retail bind: `buttons` `BUTTON_SPRINT`.
+    Sprint,
     Slot(usize),
     NextWeapon,
     PrevWeapon,
@@ -295,6 +297,9 @@ impl PlayInput {
         }
         if self.down.contains(&Action::Use) {
             buttons |= msg::BUTTON_USE;
+        }
+        if self.down.contains(&Action::Sprint) {
+            buttons |= msg::BUTTON_SPRINT;
         }
 
         UserCmd {

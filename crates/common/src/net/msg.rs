@@ -1107,6 +1107,18 @@ pub const WBUTTON_LEAN_RIGHT: u8 = 0x20;
 pub const WBUTTON_PRONE: u8 = 0x40;
 pub const WBUTTON_CROUCH: u8 = 0x80;
 
+/// Sprint, on `buttons` `0x04`.
+///
+/// **Not a retail bit.** CoD 1 has one move speed: the protocol capture
+/// (docs/protocol-1.1.md, "Usercmd input bits") found no walk bit and no
+/// sprint bit, and retail's own default binds put `+speed`/`cl_run` on the
+/// mouse wheel, which no capture ever set. Sprint is a vcod addition, so it
+/// takes the one `buttons` bit the capture proved unused (`0x04`), and the
+/// server is what turns it into speed - movement stays authoritative.
+///
+/// `0x08` is free too and is left spare.
+pub const BUTTON_SPRINT: u8 = 0x04;
+
 /// The base (all-zero) usercmd a `clc_moveNoDelta` deltas from.
 pub const NULL_USERCMD: UserCmd = UserCmd {
     server_time: 0,

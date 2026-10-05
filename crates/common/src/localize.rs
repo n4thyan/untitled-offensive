@@ -69,13 +69,10 @@ impl Localized {
     /// `@KEY` to its text, or the bare key when the table lacks it; any other
     /// text passes through. A `{+command}` token in the result is replaced with
     /// the key bound to it, the way the retail client does at draw time.
-    pub fn translate<'a>(&'a self, text: &'a str) -> Cow<'a, str> {
-        match self.resolve(text) {
-            Some(value) => substitute_binds(value, &|_| None),
-            // A key with no table entry still gets its binds resolved, so
-            // `{+activate}` never leaks into a HUD line even untranslated.
-            None => substitute_binds(text, &|_| None),
-        }
+    pub fn translate(&self, text: &str) -> String {
+        // A reference with no table entry still gets its binds resolved, so
+        // `{+activate}` never leaks into a HUD line even untranslated.
+        substitute_binds_owned(self.resolve_or_strip(text).as_ref(), &|_| None)
     }
 
     /// [`Self::translate`] with the player's key bindings, for HUD text that
@@ -94,15 +91,8 @@ impl Localized {
     /// which is what the respawn and killcam-skip prompts both did. Passing
     /// `None` for an unbound command leaves the token in place rather than
     /// printing nothing, so an unbound action stays visible as a name.
-    pub fn translate_binds<'a>(
-        &'a self,
-        text: &'a str,
-        bind_of: impl Fn(&str) -> Option<String>,
-    ) -> Cow<'a, str> {
-        match self.resolve(text) {
-            Some(value) => substitute_binds(value, &bind_of),
-            None => substitute_binds(text, &bind_of),
-        }
+    pub fn translate_binds(&self, text: &str, bind_of: impl Fn(&str) -> Option<String>) -> String {
+        substitute_binds_owned(self.resolve_or_strip(text).as_ref(), &bind_of)
     }
 
     /// The table value `text` names, or `None` when it is not a reference.
@@ -124,6 +114,26 @@ impl Localized {
             None => self.get(text),
         }
     }
+
+    /// What to draw for `text`: the string it names, or - for a reference the
+    /// table lacks - the reference *without* its `@`, which is what retail
+    /// shows for a missing string. Owns the strip so the borrow outlives the
+    /// `Cow` the caller returns.
+    fn resolve_or_strip<'a>(&'a self, text: &'a str) -> Cow<'a, str> {
+        if let Some(value) = self.resolve(text) {
+            return Cow::Borrowed(value);
+        }
+        match text.strip_prefix('@') {
+            Some(key) => Cow::Owned(key.to_string()),
+            None => Cow::Borrowed(text),
+        }
+    }
+}
+
+/// [`substitute_binds`] as an owned `String`, for the callers that hand it a
+/// value built inside the call and cannot return a borrow of it.
+fn substitute_binds_owned(text: &str, bind_of: &impl Fn(&str) -> Option<String>) -> String {
+    substitute_binds(text, bind_of).into_owned()
 }
 
 /// Replaces every `{+command}` in `text` with the key `bind_of` names.

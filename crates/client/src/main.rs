@@ -515,12 +515,20 @@ fn play_action(code: KeyCode) -> Option<play::input::Action> {
         KeyCode::Space => Action::Jump,
         KeyCode::KeyC => Action::Crouch,
         KeyCode::ControlLeft | KeyCode::ControlRight => Action::Prone,
-        KeyCode::ShiftLeft | KeyCode::ShiftRight => Action::Melee,
+        // Sprint, a vcod addition - retail binds SHIFT to "+melee" and puts
+        // its walk/run toggle on MOUSE2, which no capture ever sends.
+        KeyCode::ShiftLeft | KeyCode::ShiftRight => Action::Sprint,
         KeyCode::KeyF => Action::Use,
         KeyCode::KeyR => Action::Reload,
         KeyCode::KeyQ => Action::LeanLeft,
         KeyCode::KeyE => Action::LeanRight,
-        // `weaponslot primary`, `primaryb`, `pistol`, `grenade`.
+        // Melee moves off SHIFT to make room for sprint, so it gets V as well
+        // as the Shift binding a player used to have.
+        KeyCode::KeyV => Action::Melee,
+        // `weaponslot primary`, `primaryb`, `pistol`, `grenade`. G is an
+        // extra alias for the grenade slot; digit 4 and the wheel both still
+        // reach it.
+        KeyCode::KeyG => Action::Slot(4),
         KeyCode::Digit1 => Action::Slot(1),
         KeyCode::Digit2 => Action::Slot(2),
         KeyCode::Digit3 => Action::Slot(3),

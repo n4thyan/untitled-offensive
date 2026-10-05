@@ -18,6 +18,13 @@ pub mod weapon;
 
 pub const GRAVITY: f32 = 800.0;
 pub const SPEED_RUN: f32 = 190.0;
+
+/// Sprint multiplies the run speed. A vcod addition: CoD 1 has exactly one
+/// move speed (docs/protocol-1.1.md, "Usercmd input bits" - no walk bit, no
+/// sprint bit, and retail's `cl_run` lives on a bind no capture ever set).
+/// 1.5 is a deliberate departure from the source, not a recovered constant,
+/// and it is tuned by feel rather than measured.
+pub const SCALE_SPRINT: f32 = 1.5;
 /// Wire `ps.speed` of a captured retail spectator.
 pub const SPEED_SPECTATOR: f32 = 400.0;
 /// Retail rodata 0x70860; a spectator's fly friction (Q3's PM_Friction with
@@ -662,6 +669,10 @@ pub struct PmInput {
     pub reload: bool,
     pub ads: bool,
     pub use_button: bool,
+    /// Sprint held. A vcod addition: CoD 1 has a single move speed, so this
+    /// is not a retail input. The server scales the wish speed with it, so
+    /// a client cannot sprint by only pretending to.
+    pub sprint: bool,
     /// The usercmd's weapon byte; 0 means the cmd asks for no change.
     pub weapon: u8,
     /// The cmd's view angles in ANGLE2SHORT units, pitch and yaw. Only the
@@ -1703,6 +1714,8 @@ fn wish(ps: &PlayerState, input: &PmInput, weapon: Option<&WeaponDef>) -> (Vec3,
         scale *= SCALE_WALK;
     } else if ps.lean != 0.0 {
         scale *= SCALE_LEAN;
+    } else if input.sprint {
+        scale *= SCALE_SPRINT;
     }
     scale *= stance_speed_scale(ps);
     scale *= 1.0 - ps.water_level as f32 / 3.0 * WADE_SCALE;
@@ -5165,6 +5178,68 @@ mod tests {
             ps.lean < LEAN_MAX - 1.0,
             "a body should limit lean, got {}",
             ps.lean
+        );
+    }
+
+    /// Sprint is faster than a run, and it is a *scale* on the run speed
+    /// rather than a second move mode: a diagonal wishes no more than a
+    /// straight line, as it does without sprint.
+    #[test]
+    fn sprint_scales_the_run_speed_without_changing_its_shape() {
+        let ps = PlayerState::spawn(Vec3::ZERO, 0.0);
+        let fwd = PmInput {
+            forward: 1.0,
+            ..PmInput::default()
+        };
+        let (_, run) = wish(&ps, &fwd, None);
+        let (_, sprinted) = wish(
+            &ps,
+            &PmInput {
+                sprint: true,
+                ..fwd.clone()
+            },
+            None,
+        );
+        assert!(
+            sprinted > run * 1.2,
+            "sprint {sprinted} should clearly beat run {run}"
+        );
+        assert!((sprinted - run * SCALE_SPRINT).abs() < 0.01, "exact scale");
+
+        // A diagonal still cannot out-run a straight sprint.
+        let diag = PmInput {
+            forward: 1.0,
+            right: 1.0,
+            sprint: true,
+            ..fwd.clone()
+        };
+        let (_, d) = wish(&ps, &diag, None);
+        assert!(d <= sprinted + 0.01, "diagonal {d} vs sprint {sprinted}");
+    }
+
+    /// Sprint is not a walk: it does not stack with the walk or lean scales,
+    /// which are `else if` arms of the same branch, so a walking or leaning
+    /// player is never also sprinting.
+    #[test]
+    fn sprint_never_stacks_with_walk_or_lean() {
+        let ps = PlayerState::spawn(Vec3::ZERO, 0.0);
+        let base = PmInput {
+            forward: 1.0,
+            sprint: true,
+            ..PmInput::default()
+        };
+        let (_, sprinted) = wish(&ps, &base, None);
+        let (_, walked) = wish(
+            &ps,
+            &PmInput {
+                walk_slow: true,
+                ..base.clone()
+            },
+            None,
+        );
+        assert!(
+            walked < sprinted,
+            "walk {walked} must be slower than sprint {sprinted}, not on top of it"
         );
     }
 }

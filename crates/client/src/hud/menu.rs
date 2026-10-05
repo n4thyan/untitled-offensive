@@ -45,7 +45,7 @@ pub fn view(menu: &Menu, loc: &Localized, cvar: impl Fn(&str) -> Option<String>)
                 .find(|(_, r)| *r == response)
                 .map(|(k, _)| k.clone());
             MenuRow {
-                label: loc.translate(&item.text).into_owned(),
+                label: loc.translate(&item.text),
                 response,
                 key,
             }

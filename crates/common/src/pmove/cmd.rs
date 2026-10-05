@@ -27,8 +27,9 @@ fn short_deg(v: i32) -> f32 {
 /// level, and a crouched or prone client holds `up` at -127 for as long as it
 /// is down, so only a positive `up` is a jump. `walk_slow` has no wire source:
 /// CoD 1 has one move speed and no walk key, and pmove's walk scale is
-/// reachable only from the client's own fly mode. Bit table and evidence:
-/// docs/protocol-1.1.md, "Usercmd input bits".
+/// reachable only from the client's own fly mode. `sprint` is vcod's own bit
+/// on an input the capture proved unused, not a recovered retail one. Bit
+/// table and evidence: docs/protocol-1.1.md, "Usercmd input bits".
 pub fn pm_input(cmd: &UserCmd) -> PmInput {
     PmInput {
         forward: f32::from(cmd.forward) / 127.0,
@@ -44,6 +45,8 @@ pub fn pm_input(cmd: &UserCmd) -> PmInput {
         reload: cmd.wbuttons & msg::WBUTTON_RELOAD != 0,
         ads: cmd.buttons & msg::BUTTON_ADS != 0,
         use_button: cmd.buttons & msg::BUTTON_USE != 0,
+        // vcod's own bit, not a retail one - see `BUTTON_SPRINT`.
+        sprint: cmd.buttons & msg::BUTTON_SPRINT != 0,
         weapon: cmd.weapon,
         // Raw, the way `PM_AdjustAimSpreadScale` reads them: the turn term is
         // a delta between two cmds, so the view offset both carry cancels.
@@ -255,6 +258,9 @@ mod tests {
                 reload: false,
                 ads: false,
                 use_button: false,
+                // `buttons: 0xff` sets it too; sprint is a real bit now, not
+                // a stray one that has to stay clear.
+                sprint: false,
                 weapon: 0,
                 ..all
             },
@@ -293,5 +299,20 @@ mod tests {
         };
         r.add(7, 1);
         assert_eq!((r.seq, r.events[3], r.parms[3]), (0, 7, 1));
+    }
+
+    /// Sprint rides a bit the capture proved unused, and it is the server -
+    /// not the client - that turns it into speed.
+    #[test]
+    fn the_sprint_bit_reaches_pm_input() {
+        let mut cmd = UserCmd::default();
+        assert!(!pm_input(&cmd).sprint, "sprint off by default");
+        cmd.buttons |= msg::BUTTON_SPRINT;
+        assert!(pm_input(&cmd).sprint);
+        // The bits around it are untouched: a sprinting player still fires
+        // and still aims.
+        cmd.buttons |= msg::BUTTON_ATTACK | msg::BUTTON_ADS;
+        let i = pm_input(&cmd);
+        assert!(i.sprint && i.attack && i.ads);
     }
 }

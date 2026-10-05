@@ -1373,7 +1373,9 @@ the `wbuttons` 0x4 factor.
 | 0x2000 | 200 ms landing lockout after a jump; refuses a jump, never arms ("Jumps") | set @0x2FFE0, tested at 0x2EBC3 |
 
 (`PMF_PRONE`, `PMF_CROUCH`, `PMF_LADDER`, `PMF_SLIDING=0x100` agree with
-CoDExtended's `shared.h`; bits 0x04/0x08/0x80/0x800/0x2000 are INFERRED from
+CoDExtended's `shared.h`.
+
+INFERRED, from usage sites only: bits 0x04/0x08/0x80/0x800/0x2000.
 usage sites only.)
 
 ## Tunables (all read directly from rodata, VERIFIED values)

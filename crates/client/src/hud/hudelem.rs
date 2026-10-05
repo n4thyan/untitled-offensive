@@ -310,7 +310,6 @@ fn localized(loc: &Localized, cs: &[String], index: usize, binds: &Binds) -> Str
         return String::new();
     }
     loc.translate_binds(key, |cmd| binds.key_for(cmd))
-        .into_owned()
 }
 
 /// The player's command-to-key bindings, for the `{+command}` tokens in
@@ -325,7 +324,14 @@ pub struct Binds {
 /// stock `config_mp.cfg` it is F — the same key `play_action` reads as
 /// `Action::Use`, so the prompt and the key that dismisses it cannot drift.
 pub fn stock_binds() -> Binds {
-    Binds::from_pairs([("activate", "F"), ("attack", "MOUSE1"), ("use", "F")])
+    Binds::from_pairs([
+        ("activate", "F"),
+        ("attack", "MOUSE1"),
+        ("use", "F"),
+        ("melee", "V"),
+        ("reload", "R"),
+        ("sprint", "SHIFT"),
+    ])
 }
 
 impl Binds {
