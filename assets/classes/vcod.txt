@@ -1,0 +1,34 @@
+# UNTITLED - the local human player's class profile
+#
+# Keyed to the name the client sends in its connect userinfo, which
+# `NetClient::send_connect` hardcodes as `vcod` (crates/common/src/net/mod.rs).
+# A client with no file under this name keeps whatever it picked at the stock
+# weapon menu instead - the built-in default is a fallback for a fresh install,
+# not something forced on everyone.
+#
+# The first playable class is the active class, so `Assault` is what spawns
+# until class selection exists. thompson_mp is deliberately unmistakable next to
+# the M1 Carbine the stock weapon menu offers: if you spawn holding a drum
+# magazine, Create-a-Class is working.
+#
+# Perk names are validated against the known list and do nothing yet.
+
+profile Local
+
+class Assault
+primary thompson_mp
+secondary colt_mp
+equipment fraggrenade_mp
+perk1 perk_sleight_of_hand
+
+class Rifleman
+primary m1garand_mp
+secondary colt_mp
+equipment fraggrenade_mp
+perk1 perk_stopping_power
+
+class Support
+primary bar_mp
+secondary luger_mp
+equipment stielhandgranate_mp
+perk1 perk_juggernaut

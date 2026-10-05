@@ -3116,7 +3116,14 @@ impl Server {
         // the whole age of the client's clock.
         c.last_processed_st =
             entering.map_or(self.sv_time_ms.wrapping_sub(FRAME_MS), |c| c.server_time);
-        log::info!("client {slot} {:?} begin (spectator)", c.name);
+        // Unconditional and deliberately worded: this fires once, at entry,
+        // before the client has answered a single menu, so "spectator" here
+        // describes the starting state and not where the client ends up. It
+        // read as a live status and sent us hunting a join bug that was not
+        // there while the player was visibly in first person. The live state
+        // is `pm_type`, and the transitions out of spectator are logged where
+        // they happen.
+        log::info!("client {slot} {:?} begin (starting as spectator)", c.name);
         // `ClientBegin`: the notify that releases the connect callback's
         // `waittill("begin")`. The event queues rather than fires here, so it
         // is drained after the `Connect` that armed the wait.
