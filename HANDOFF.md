@@ -166,12 +166,15 @@ Please check:
 
 ## Git
 
-- Checkpoint commit: see §14 (this session's commit).
+- Checkpoint commit: **`92e5689`** `feat: data-driven Create-a-Class, and the
+  weapon survey that precedes it`, on top of `ad32f34`.
 - Working tree clean at that commit.
 - **pushed: NO** — local only.
 - **No proprietary data tracked.** `.gitignore` blocks every CoD asset extension
-  (`*.pk3`, `*.bsp`, `*.xmodel`, `*.xanim`, `*.gsc`, `*.tga`, `*.dds`, `*.wav`)
-  and the generated overlay, with an explicit negation so our own
+  (`*.pk3`, `*.bsp`, `*.xmodel`, `*.xanim`, `*.gsc`, `*.tga`, `*.dds`, `*.wav`).
+  The four new `tools/re/*.py` read the retail install and write only to the
+  scratch directory.
+  The generated overlay is also ignored, with an explicit negation so our own
   `assets/scripts/*.gsc` is versioned. Textures are referenced by name, never
   copied.
 
