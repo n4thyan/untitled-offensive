@@ -242,6 +242,7 @@ impl Hud {
                 &elems,
                 f.configstrings,
                 f.localized,
+                &hudelem::stock_binds(),
                 fonts,
                 f.server_time,
                 screen,

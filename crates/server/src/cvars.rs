@@ -54,7 +54,27 @@ const ENGINE_MIRRORED: &[(&str, &str)] = &[
 /// reads one of them gets `""` with no warning. `tools/re/dump_cvars.py`
 /// prints the table, so adding a row is a lookup: pass the cvar's name and
 /// take its default.
-const ENGINE_DEFAULTS: &[(&str, &str)] = &[("g_useGear", "1")];
+///
+/// The killcam pair is here because leaving it out silently disabled a visible
+/// feature. `dm.gsc`'s `ClientObituary` ends with
+///
+/// ```text
+/// if((getCvarInt("scr_killcam") <= 0) || (getCvarInt("scr_forcerespawn") > 0))
+///     doKillcam = false;
+/// if(doKillcam) self thread killcam(attackerNum, delay);
+/// else         self thread respawn();
+/// ```
+///
+/// A missing cvar reads `""`, `getCvarInt("")` is 0, and `0 <= 0` is true, so
+/// every death took the `respawn()` branch and the killcam never ran. Retail
+/// ships the killcam on (`scr_killcam` 1) and does not force respawn
+/// (`scr_forcerespawn` 0), which is the pair that makes the branch take
+/// `killcam`.
+const ENGINE_DEFAULTS: &[(&str, &str)] = &[
+    ("g_useGear", "1"),
+    ("scr_killcam", "1"),
+    ("scr_forcerespawn", "0"),
+];
 
 #[derive(Clone)]
 struct Cvar {
@@ -413,5 +433,24 @@ mod tests {
                 "the static table sets {i}, which the mirror writes"
             );
         }
+    }
+
+    /// `dm.gsc` gates the killcam on this pair, and a *missing* cvar reads
+    /// `""` -> `getCvarInt` 0 -> `scr_killcam <= 0` is true, so every death
+    /// silently took the `respawn()` branch instead. Both must be present, on
+    /// the retail defaults, or the killcam never runs.
+    #[test]
+    fn the_killcam_cvars_are_present_with_their_retail_defaults() {
+        let cv = Cvars::new();
+        assert_eq!(
+            cv.get("scr_killcam"),
+            "1",
+            "the killcam ships on; 0 makes dm.gsc skip it"
+        );
+        assert_eq!(
+            cv.get("scr_forcerespawn"),
+            "0",
+            "any positive value makes dm.gsc skip the killcam too"
+        );
     }
 }

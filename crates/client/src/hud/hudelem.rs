@@ -7,6 +7,8 @@ use std::sync::Mutex;
 
 use super::font::{self, Font};
 use super::HudQuad;
+use std::collections::HashMap;
+
 use vcod_common::localize::Localized;
 use vcod_common::net::msg::{hud_field as f, HudElem};
 
@@ -135,6 +137,7 @@ pub fn build(
     elems: &[HudElem],
     configstrings: &[String],
     loc: &Localized,
+    binds: &Binds,
     fonts: (&Font, &Font, &Font),
     server_time: i32,
     screen: (f32, f32),
@@ -148,7 +151,7 @@ pub fn build(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     for e in order {
-        draw(e, configstrings, loc, fonts, server_time, &v, out);
+        draw(e, configstrings, loc, binds, fonts, server_time, &v, out);
     }
 }
 
@@ -156,6 +159,7 @@ fn draw(
     e: &HudElem,
     cs: &[String],
     loc: &Localized,
+    binds: &Binds,
     fonts: (&Font, &Font, &Font),
     now: i32,
     v: &Virtual,
@@ -183,7 +187,7 @@ fn draw(
     let body = match ty {
         1 => Some(match e.get(f::TEXT) {
             0 => String::new(),
-            i => localized(loc, cs, CS_LOCALIZED + i as usize),
+            i => localized(loc, cs, CS_LOCALIZED + i as usize, binds),
         }),
         2 => Some(format_g(e.get_f32(f::VALUE))),
         4..=7 => Some(timer_text(ty, e.get(f::TIME), now)),
@@ -192,7 +196,7 @@ fn draw(
 
     let label = match e.get(f::LABEL) {
         0 => String::new(),
-        i => localized(loc, cs, CS_LOCALIZED + i as usize),
+        i => localized(loc, cs, CS_LOCALIZED + i as usize, binds),
     };
     if let Some(body) = body {
         let s = merge_label(&label, &body);
@@ -294,13 +298,51 @@ fn fade_color(e: &HudElem, now: i32) -> [f32; 4] {
 
 /// A localized-string configstring as text: its table entry, or the bare
 /// key when the table lacks it; an empty configstring reads empty.
-fn localized(loc: &Localized, cs: &[String], index: usize) -> String {
+///
+/// A `{+command}` in the entry is resolved against `binds`, the way the retail
+/// client does when it draws the string. Retail ships these prompts with the
+/// command in braces (`"Press [{+activate}] to respawn"`) and substitutes the
+/// player's own key at draw time, because a bind table is editable; printing
+/// the token is what made the respawn and killcam-skip prompts unreadable.
+fn localized(loc: &Localized, cs: &[String], index: usize, binds: &Binds) -> String {
     let key = cs.get(index).map(String::as_str).unwrap_or("");
     if key.is_empty() {
         return String::new();
     }
-    let bare = key.strip_prefix('@').unwrap_or(key);
-    loc.get(bare).unwrap_or(bare).to_string()
+    loc.translate_binds(key, |cmd| binds.key_for(cmd))
+        .into_owned()
+}
+
+/// The player's command-to-key bindings, for the `{+command}` tokens in
+/// localized HUD strings.
+#[derive(Default)]
+pub struct Binds {
+    keys: HashMap<String, String>,
+}
+
+/// Retail's `config_mp.cfg` command-to-key map for the commands a HUD prompt
+/// can name. `+activate` is the respawn and killcam-skip key, and under the
+/// stock `config_mp.cfg` it is F — the same key `play_action` reads as
+/// `Action::Use`, so the prompt and the key that dismisses it cannot drift.
+pub fn stock_binds() -> Binds {
+    Binds::from_pairs([("activate", "F"), ("attack", "MOUSE1"), ("use", "F")])
+}
+
+impl Binds {
+    pub fn from_pairs<const N: usize>(pairs: [(&str, &str); N]) -> Binds {
+        Binds {
+            keys: pairs
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        }
+    }
+
+    /// The key bound to `command`, without the leading `+` the token carries.
+    fn key_for(&self, command: &str) -> Option<String> {
+        let name = command.strip_prefix('+').unwrap_or(command);
+        self.keys.get(name).cloned()
+    }
 }
 
 /// `shaderIndex`'s material, or `None` (warned once per index) when its
@@ -455,6 +497,7 @@ pub(crate) mod tests {
             elems,
             cs,
             &Localized::default(),
+            &stock_binds(),
             (&font, &font, &font),
             now,
             screen,
@@ -683,5 +726,60 @@ pub(crate) mod tests {
         assert_eq!(merge_label("Score: ", "5"), "Score: 5");
         assert_eq!(merge_label("", "5"), "5");
         assert_eq!(merge_label("Score: %s", ""), "Score: %s");
+    }
+
+    /// The respawn and killcam-skip prompts must name the player's key, not
+    /// the retail `{+activate}` token. Both are localized strings that ship
+    /// with the command in braces, and the retail client substitutes the bind
+    /// when it draws them; printing the token made the prompts unreadable.
+    ///
+    /// The square brackets are literal text in the retail string, so the drawn
+    /// result is `Press [F] to respawn` — only the braced command is replaced,
+    /// exactly as retail does it.
+    #[test]
+    fn a_bind_token_in_a_hud_string_resolves_to_the_players_key() {
+        let mut loc = Localized::default();
+        // Verbatim from localizedstrings/english/mpscript.str.
+        loc.parse_into(
+            "mpscript",
+            "REFERENCE           PRESS_ACTIVATE_TO_RESPAWN\n\
+             LANG_ENGLISH        \"Press [{+activate}] to respawn\"\n\
+             REFERENCE           PRESS_ACTIVATE_TO_SKIP\n\
+             LANG_ENGLISH        \"Press [{+activate}] to skip\"",
+        );
+        let binds = stock_binds();
+        assert_eq!(
+            loc.translate_binds("@MPSCRIPT_PRESS_ACTIVATE_TO_RESPAWN", |c| {
+                binds.key_for(c)
+            }),
+            "Press [F] to respawn"
+        );
+        assert_eq!(
+            loc.translate_binds("@MPSCRIPT_PRESS_ACTIVATE_TO_SKIP", |c| binds.key_for(c)),
+            "Press [F] to skip"
+        );
+        // An unbound command stays visible as its own name rather than
+        // blanking the prompt.
+        assert_eq!(
+            loc.translate_binds("@MPSCRIPT_PRESS_ACTIVATE_TO_SKIP", |_| None),
+            "Press [{+activate}] to skip"
+        );
+    }
+
+    /// Two prompts in one string, and one with no token, both unchanged.
+    #[test]
+    fn bind_substitution_leaves_ordinary_text_alone() {
+        let loc = Localized::default();
+        let binds = stock_binds();
+        assert_eq!(
+            loc.translate_binds("Respawning", |c| binds.key_for(c)),
+            "Respawning"
+        );
+        assert_eq!(
+            loc.translate_binds("Press [{+activate}] then [{+attack}]", |c| {
+                binds.key_for(c)
+            }),
+            "Press [F] then [MOUSE1]"
+        );
     }
 }

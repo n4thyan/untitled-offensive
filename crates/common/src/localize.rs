@@ -56,13 +56,84 @@ impl Localized {
     }
 
     /// `@KEY` to its text, or the bare key when the table lacks it; any other
-    /// text passes through.
+    /// text passes through. A `{+command}` token in the result is replaced with
+    /// the key bound to it, the way the retail client does at draw time.
     pub fn translate<'a>(&'a self, text: &'a str) -> Cow<'a, str> {
-        match text.strip_prefix('@') {
-            Some(key) => Cow::Borrowed(self.get(key).unwrap_or(key)),
-            None => Cow::Borrowed(text),
+        let Some(key) = text.strip_prefix('@') else {
+            return Cow::Borrowed(text);
+        };
+        match self.get(key) {
+            Some(value) => substitute_binds(value, &|_| None),
+            // A key with no table entry still gets its binds resolved, so
+            // `{+activate}` never leaks into a HUD line even untranslated.
+            None => substitute_binds(key, &|_| None),
         }
     }
+
+    /// [`Self::translate`] with the player's key bindings, for HUD text that
+    /// names a key to press.
+    ///
+    /// Retail ships these strings with the bind command in braces rather than
+    /// a key name, and the client substitutes the player's own binding when it
+    /// draws them. Read out of `localizedstrings/english/mpscript.str`:
+    ///
+    /// ```text
+    /// PRESS_ACTIVATE_TO_RESPAWN  "Press [{+activate}] to respawn"
+    /// PRESS_ACTIVATE_TO_SKIP     "Press [{+activate}] to skip"
+    /// ```
+    ///
+    /// Without the substitution the HUD shows the literal `[{+activate}]`,
+    /// which is what the respawn and killcam-skip prompts both did. Passing
+    /// `None` for an unbound command leaves the token in place rather than
+    /// printing nothing, so an unbound action stays visible as a name.
+    pub fn translate_binds<'a>(
+        &'a self,
+        text: &'a str,
+        bind_of: impl Fn(&str) -> Option<String>,
+    ) -> Cow<'a, str> {
+        let resolved = match text.strip_prefix('@') {
+            Some(key) => self.get(key),
+            None => None,
+        };
+        match resolved {
+            Some(value) => substitute_binds(value, &bind_of),
+            None => substitute_binds(text, &bind_of),
+        }
+    }
+}
+
+/// Replaces every `{+command}` in `text` with the key `bind_of` names.
+///
+/// Retail writes these as a braced command so one string serves every binding
+/// scheme; a bind table can be edited, so the text is resolved at draw time
+/// rather than baked. An unknown command is left verbatim, which keeps the
+/// prompt readable instead of blanking it.
+fn substitute_binds<'a>(text: &'a str, bind_of: &impl Fn(&str) -> Option<String>) -> Cow<'a, str> {
+    if !text.contains("{+") {
+        return Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("{+") {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at + 2..];
+        match tail.find('}') {
+            Some(end) => {
+                let command = &tail[..end];
+                match bind_of(command) {
+                    Some(key) => out.push_str(&key),
+                    None => out.push_str(&rest[at..at + 2 + end + 1]),
+                }
+                rest = &tail[end + 1..];
+            }
+            None => {
+                out.push_str(&rest[at..]);
+                return Cow::Owned(out);
+            }
+        }
+    }
+    out.push_str(rest);
+    Cow::Owned(out)
 }
 
 /// The text between the first and the last `"`, with `\n` and `\"` unescaped.
