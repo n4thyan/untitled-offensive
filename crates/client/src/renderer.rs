@@ -935,6 +935,10 @@ struct WorldGpu {
     /// Last frame's mode, so `Locked` and `Off` skip re-uploading indices
     /// that cannot have changed.
     last_cull: Option<CullMode>,
+    /// DIAG: one-time diagnostic print flag.
+    diag_printed: bool,
+    /// DIAG: BSP model bounds for diagnostics.
+    bsp_models: Vec<vcod_common::bsp::Model>,
 }
 
 /// One cloud-dome draw: a stage of the active sky block over the whole dome
@@ -1668,16 +1672,17 @@ impl Renderer {
             clamp: 0.0,
         };
         let cull_back = Some(wgpu::Face::Back);
+        // DIAG: world pipeline — disable backface culling to test IW4 winding
         let pipeline = make_pipeline(
-            "map pipeline",
+            "world",
             &pipeline_layout,
             "vs_main",
-            Default::default(),
+            wgpu::DepthBiasState::default(),
             "fs_main",
             false,
             None,
             true,
-            cull_back,
+            None,
         );
         // Props take the opaque alpha-test path: `*_masked` skins are cutouts
         // on real geometry, not coplanar decals, so no overlay depth bias.
@@ -2406,6 +2411,8 @@ impl Renderer {
             gather_scratch: Vec::new(),
             locked: None,
             last_cull: None,
+            diag_printed: false,
+            bsp_models: bsp.models.clone(),
         });
         Ok(())
     }
@@ -2955,6 +2962,34 @@ impl Renderer {
                     .map_or(0, |(v, _)| v.stats.portals_occluded),
                 gather_ms: t0.elapsed().as_secs_f32() * 1000.0,
             };
+            // DIAG: one-time world bounds + visibility summary
+            if !world.diag_printed {
+                world.diag_printed = true;
+                let model = &world.bsp_models[0];
+                println!(
+                    "DIAG world bounds: mins={:?} maxs={:?}",
+                    model.mins, model.maxs
+                );
+                println!(
+                    "DIAG eye={:?} frustum_intersects_world={}",
+                    frame.eye,
+                    frustum.intersects_aabb(
+                        glam::Vec3::from(model.mins),
+                        glam::Vec3::from(model.maxs)
+                    )
+                );
+                if let Some((v, _)) = &visible {
+                    println!(
+                        "DIAG visible: cells={}/{} soups={}/{} tris={}/{}",
+                        v.cells.iter().filter(|&&c| c).count(),
+                        world.vis.cell_count(),
+                        v.stats.soups,
+                        world.soup_ranges.len(),
+                        world.gathered.len() / 3,
+                        world.cpu_indices.len() / 3
+                    );
+                }
+            }
             if frame.cull == CullMode::Locked {
                 world.locked = visible;
             } else {

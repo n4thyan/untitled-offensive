@@ -6,7 +6,9 @@
 use crate::{
     ClipMapGeometry, GfxWorldGeometry, MapEntsGeometry, Result, ZoneStream,
 };
-use vcod_common::bsp::{Bsp, Brush, BrushSide, DrawVert, Material, Plane, TriangleSoup};
+use vcod_common::bsp::{
+    AabbNode, Bsp, Brush, BrushSide, Cell, DrawVert, Material, Plane, TriangleSoup,
+};
 
 /// Sanity limits for IW4 geometry fields.
 /// Based on verified mp_rust.ff metrics.
@@ -333,19 +335,59 @@ pub fn build_bsp(
         mat.content_flags |= 0x1;
     }
 
-    // Build a single model covering all geometry
+    // Compute real world bounds from actual vertices.
+    let mut world_mins = [f32::INFINITY; 3];
+    let mut world_maxs = [f32::NEG_INFINITY; 3];
+    for v in &verts {
+        for a in 0..3 {
+            world_mins[a] = world_mins[a].min(v.pos[a]);
+            world_maxs[a] = world_maxs[a].max(v.pos[a]);
+        }
+    }
+    // Small epsilon to avoid degenerate bounds.
+    for a in 0..3 {
+        if world_mins[a].is_finite() && world_maxs[a].is_finite() {
+            world_mins[a] -= 1.0;
+            world_maxs[a] += 1.0;
+        }
+    }
+
+    // Build a single model covering all geometry with REAL bounds.
     let models = vec![vcod_common::bsp::Model {
-        mins: [-2048.0, -2048.0, -1024.0],
-        maxs: [2048.0, 2048.0, 1024.0],
+        mins: world_mins,
+        maxs: world_maxs,
         first_soup: 0,
         num_soups: soups.len() as u32,
         first_brush: 0,
         num_brushes: brushes.len() as u32,
     }];
 
-    // Build empty lightmaps (fallback)
+    // Build a minimal but valid visibility graph:
+    // - One cell covering the world bounds
+    // - One AABB node with all soups (no children)
+    // This lets visible_fallback mark all soups visible when the frustum
+    // intersects the cell bounds.
+    let cells = vec![Cell {
+        mins: world_mins,
+        maxs: world_maxs,
+        first_aabb: 0,
+        first_portal: 0,
+        portal_count: 0,
+        first_cull_index: 0,
+        cull_count: 0,
+        first_occluder: 0,
+        occluder_count: 0,
+    }];
+    let aabb_nodes = vec![AabbNode {
+        first_soup: 0,
+        soup_count: soups.len() as u32,
+        child_count: 0,
+    }];
+
+    // Build white lightmaps so geometry is visible without real MW2 lightmaps.
+    // A black lightmap would multiply the texture to zero (invisible).
     let lightmaps: Vec<Vec<u8>> = (0..16)
-        .map(|_| vec![0u8; 512 * 512 * 3])
+        .map(|_| vec![255u8; 512 * 512 * 3])
         .collect();
 
     Ok(Bsp {
@@ -366,8 +408,8 @@ pub fn build_bsp(
         occluder_plane_indices: Vec::new(),
         occluder_edges: Vec::new(),
         occluder_indices: Vec::new(),
-        aabb_nodes: Vec::new(),
-        cells: Vec::new(),
+        aabb_nodes,
+        cells,
         portals: Vec::new(),
         nodes: Vec::new(),
         leafs: Vec::new(),

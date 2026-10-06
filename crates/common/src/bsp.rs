@@ -89,6 +89,7 @@ pub struct Brush {
 /// brushmodels. Soup and brush ranges partition their lumps (doc, "Lump 27,
 /// models").
 #[derive(Debug)]
+#[derive(Clone)]
 pub struct Model {
     /// Relative to the brushmodel's origin brush. Unused outside tests.
     pub mins: [f32; 3],
