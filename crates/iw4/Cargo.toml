@@ -1,0 +1,16 @@
+[package]
+name = "iw4"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "MW2/IW4 fastfile loading and world geometry extraction"
+
+[dependencies]
+vcod-common = { path = "../common" }
+asset_iw4 = { path = "../asset_iw4" }
+flate2 = "1.0"
+byteorder = "1.5"
+
+thiserror = "1.0"
+
+[dev-dependencies]

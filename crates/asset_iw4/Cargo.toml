@@ -1,0 +1,11 @@
+[package]
+name = "asset_iw4"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Retail IW4 asset layouts — the IR every fastfile container decodes into."
+
+[dependencies]
+d3d9_decl = { path = "../d3d9_decl" }
+d3d9_state = { path = "../d3d9_state" }
+
