@@ -9,6 +9,7 @@ mod stream;
 mod wire;
 mod zone;
 pub mod zone_open;
+pub mod adapter;
 
 pub use wire::{Iw4WireFormat, WireAssetTable, WirePointer, WireTableError, read_wire_asset_table};
 
