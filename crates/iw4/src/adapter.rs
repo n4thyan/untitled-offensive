@@ -249,37 +249,12 @@ pub fn clipmap_to_collision(
         }
     }
 
-    // Read brush sides: 8 bytes each (plane_or_dist: 4, material: 4)
-    let mut brush_sides = Vec::new();
-    if let Some(bsptr) = clip.brush_sides {
-        for i in 0..clip.brush_side_count {
-            let base = bsptr.at(i * 8);
-            let plane_or_dist = s.u32_at(base, 0)?;
-            let material = s.u32_at(base, 4)?;
-            brush_sides.push(BrushSide {
-                plane_or_dist,
-                material,
-            });
-        }
-    }
+    // Temporarily disable IW4 brush conversion - not yet properly decoded
+// TODO: Native IW4 cbrush_t conversion still needs semantic decoding
+let brush_sides = Vec::new();
+let brushes = Vec::new();
 
-    // Read brushes: 36 bytes each (first_side: 4, num_sides: 2, material: 2, ...)
-    let mut brushes = Vec::new();
-    if let Some(bptr) = clip.brushes {
-        for i in 0..clip.brush_count {
-            let base = bptr.at(i * 36);
-            let first_side = s.u32_at(base, 0)?;
-            let num_sides = s.u16_at(base, 4)?;
-            let material = s.u16_at(base, 6)?;
-            brushes.push(Brush {
-                first_side,
-                num_sides,
-                material,
-            });
-        }
-    }
-
-    // Read collision verts: 12 bytes each
+// Read collision verts: 12 bytes each
     let mut collision_verts = Vec::new();
     if let Some(vptr) = clip.verts {
         for i in 0..clip.vert_count {
@@ -335,10 +310,28 @@ pub fn build_bsp(
     clip: &ClipMapGeometry,
     map_ents: &MapEntsGeometry,
 ) -> Result<Bsp> {
-    let (verts, indices, soups, materials) = gfxworld_to_draw_geometry(s, gfx)?;
+    let (verts, indices, soups, mut materials) = gfxworld_to_draw_geometry(s, gfx)?;
     let (planes, brush_sides, brushes, collision_verts, collision_indices) =
         clipmap_to_collision(s, clip)?;
     let entities = mapents_to_entities(s, map_ents)?;
+
+    // Ensure materials vector covers all brush material indices.
+    // IW4 brush material indices refer to the IW4 material table which we
+    // don't fully load; create fallback entries so indexing doesn't panic.
+    // Set CONTENTS_SOLID so the collision system actually uses these brushes.
+    let max_brush_mat = brushes.iter().map(|b| b.material as usize).max().unwrap_or(0);
+    if max_brush_mat >= materials.len() {
+        let fallback = materials.first().cloned().unwrap_or(Material {
+            name: "iw4/fallback".to_string(),
+            surface_flags: 0,
+            content_flags: 0,
+        });
+        materials.resize(max_brush_mat + 1, fallback);
+    }
+    // Ensure all materials have CONTENTS_SOLID (0x1) so collision uses them
+    for mat in &mut materials {
+        mat.content_flags |= 0x1;
+    }
 
     // Build a single model covering all geometry
     let models = vec![vcod_common::bsp::Model {

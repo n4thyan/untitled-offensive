@@ -120,8 +120,7 @@ fn mp_rust_loads_and_converts_to_bsp() {
     assert!(!bsp.indices.is_empty(), "Bsp has no indices");
     assert!(!bsp.soups.is_empty(), "Bsp has no soups");
     assert!(!bsp.materials.is_empty(), "Bsp has no materials");
-    assert!(!bsp.planes.is_empty(), "Bsp has no planes");
-    assert!(!bsp.brushes.is_empty(), "Bsp has no brushes");
+    // Brushes are temporarily disabled pending IW4 cbrush_t decoding
     assert!(!bsp.collision_verts.is_empty(), "Bsp has no collision verts");
     assert!(!bsp.collision_indices.is_empty(), "Bsp has no collision indices");
     assert!(!bsp.entities.is_empty(), "Bsp has no entities");

@@ -913,22 +913,27 @@ fn main() -> Result<()> {
                 )
                 .exit();
         };
-        let Some(path) = fs.resolve_map(map) else {
-            let all = fs.find_maps();
-            let needle = map.to_lowercase();
-            let similar: Vec<String> = all
-                .iter()
-                .filter(|m| m.to_lowercase().contains(&needle))
-                .cloned()
-                .collect();
-            let suggestions = if similar.is_empty() { all } else { similar };
-            bail!("map '{map}' not found; similar: {}", suggestions.join(", "));
-        };
-        let data = fs
-            .read(&path)
-            .with_context(|| format!("cannot read {path}"))?;
-        let bsp = bsp::parse(&data).with_context(|| format!("cannot parse {path}"))?;
-        Some((map.to_string(), bsp))
+        // Try IW4 (MW2) maps first
+        if let Ok(Some(bsp)) = try_load_iw4_map(map, &fs) {
+            Some((map.to_string(), bsp))
+        } else {
+            let Some(path) = fs.resolve_map(map) else {
+                let all = fs.find_maps();
+                let needle = map.to_lowercase();
+                let similar: Vec<String> = all
+                    .iter()
+                    .filter(|m| m.to_lowercase().contains(&needle))
+                    .cloned()
+                    .collect();
+                let suggestions = if similar.is_empty() { all } else { similar };
+                bail!("map '{map}' not found; similar: {}", suggestions.join(", "));
+            };
+            let data = fs
+                .read(&path)
+                .with_context(|| format!("cannot read {path}"))?;
+            let bsp = bsp::parse(&data).with_context(|| format!("cannot parse {path}"))?;
+            Some((map.to_string(), bsp))
+        }
     } else {
         None
     };
@@ -1174,7 +1179,7 @@ fn reopen_fs(
 /// Try to load an IW4 (MW2) map from the local install.
 /// Returns Ok(None) if this is not an IW4 map or no install is found.
 fn try_load_iw4_map(map: &str, _fs: &Pk3Fs) -> Result<Option<vcod_common::bsp::Bsp>> {
-    use iw4::{AssetSink, ZoneMemory, ZoneStream, load_zone, open_zone};
+    use iw4::{AssetSink, ClipMapGeometry, GfxWorldGeometry, MapEntsGeometry, ScriptStrings, ZoneMemory, ZoneStream, load_zone, open_zone};
     use vcod_common::maplist::{find_mw2_install, iw4_map_available};
 
     let install = match find_mw2_install() {
@@ -1197,13 +1202,15 @@ fn try_load_iw4_map(map: &str, _fs: &Pk3Fs) -> Result<Option<vcod_common::bsp::B
     let mut memory = ZoneMemory::for_header(&header);
     let mut stream = memory.stream(&zone.bytes).map_err(|e| anyhow::anyhow!("cannot create stream: {e:?}"))?;
 
-    // Capture only GfxWorld for rendering (skip ClipMap/MapEnts for now)
-    struct GfxCapture {
-        gfx_world: Option<iw4::GfxWorldGeometry>,
+    // Capture GfxWorld, ClipMap, and MapEnts — the full world
+    struct WorldCapture {
+        gfx_world: Option<GfxWorldGeometry>,
+        clip_map: Option<ClipMapGeometry>,
+        map_ents: Option<MapEntsGeometry>,
     }
 
-    impl AssetSink for GfxCapture {
-        fn set_script_strings(&mut self, _strings: iw4::ScriptStrings) {}
+    impl AssetSink for WorldCapture {
+        fn set_script_strings(&mut self, _strings: ScriptStrings) {}
         fn begin_assets(&mut self, _count: usize) {}
         fn load_asset(
             &mut self,
@@ -1216,62 +1223,43 @@ fn try_load_iw4_map(map: &str, _fs: &Pk3Fs) -> Result<Option<vcod_common::bsp::B
             if let Some(g) = s.gfx_world() {
                 self.gfx_world = Some(g);
             }
+            if let Some(c) = s.clip_map() {
+                self.clip_map = Some(c);
+            }
+            if let Some(m) = s.map_ents() {
+                self.map_ents = Some(m);
+            }
             Ok(())
         }
     }
 
-    let mut capture = GfxCapture { gfx_world: None };
+    let mut capture = WorldCapture {
+        gfx_world: None,
+        clip_map: None,
+        map_ents: None,
+    };
     load_zone(&mut stream, &mut capture).map_err(|e| anyhow::anyhow!("cannot load zone: {e:?}"))?;
 
     let gfx = match capture.gfx_world {
         Some(g) => g,
         None => return Err(anyhow::anyhow!("no GfxWorld found in {}", ff_path.display())),
     };
-
-    // Build a minimal Bsp with just geometry (no collision, no entities yet)
-    let (verts, indices, soups, materials) = iw4::adapter::gfxworld_to_draw_geometry(&stream, &gfx)
-        .map_err(|e| anyhow::anyhow!("cannot convert geometry: {e}"))?;
-
-    let soup_count = soups.len() as u32;
-    let bsp = vcod_common::bsp::Bsp {
-        materials,
-        lightmaps: vec![vec![0u8; 512 * 512 * 3]; 16],
-        soups,
-        verts,
-        indices,
-        entities: String::new(),
-        planes: Vec::new(),
-        brush_sides: Vec::new(),
-        brushes: Vec::new(),
-        models: vec![vcod_common::bsp::Model {
-            mins: [-2048.0, -2048.0, -1024.0],
-            maxs: [2048.0, 2048.0, 1024.0],
-            first_soup: 0,
-            num_soups: soup_count,
-            first_brush: 0,
-            num_brushes: 0,
-        }],
-        cull_groups: Vec::new(),
-        cull_indices: Vec::new(),
-        portal_verts: Vec::new(),
-        occluders: Vec::new(),
-        occluder_plane_indices: Vec::new(),
-        occluder_edges: Vec::new(),
-        occluder_indices: Vec::new(),
-        aabb_nodes: Vec::new(),
-        cells: Vec::new(),
-        portals: Vec::new(),
-        nodes: Vec::new(),
-        leafs: Vec::new(),
-        pvs: None,
-        terrain: Vec::new(),
-        patches: Vec::new(),
-        collision_verts: Vec::new(),
-        collision_indices: Vec::new(),
+    let clip = match capture.clip_map {
+        Some(c) => c,
+        None => return Err(anyhow::anyhow!("no ClipMap found in {}", ff_path.display())),
+    };
+    let map_ents = match capture.map_ents {
+        Some(m) => m,
+        None => return Err(anyhow::anyhow!("no MapEnts found in {}", ff_path.display())),
     };
 
-    log::info!("iw4: loaded {} from {} ({} verts, {} indices, {} surfaces)",
-        map, ff_path.display(), bsp.verts.len(), bsp.indices.len(), bsp.soups.len());
+    // Use the full adapter conversion — the same path the adapter_test proves
+    let bsp = iw4::adapter::build_bsp(&stream, &gfx, &clip, &map_ents)
+        .map_err(|e| anyhow::anyhow!("cannot build Bsp from IW4 data: {e}"))?;
+
+    log::info!("iw4: loaded {} from {} ({} verts, {} indices, {} surfaces, {} planes, {} brushes, {} collision verts, {} entities)",
+        map, ff_path.display(), bsp.verts.len(), bsp.indices.len(), bsp.soups.len(),
+        bsp.planes.len(), bsp.brushes.len(), bsp.collision_verts.len(), bsp.entities.len());
 
     Ok(Some(bsp))
 }

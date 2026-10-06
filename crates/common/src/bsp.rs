@@ -33,7 +33,7 @@ const LUMP_COLLISION_PARTS: usize = 24;
 const LUMP_COLLISION_VERTS: usize = 25;
 const LUMP_COLLISION_INDICES: usize = 26;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Material {
     pub name: String,
     /// Unused; surfaces are skipped by material name.
@@ -1115,11 +1115,14 @@ pub fn sun_direction(entities: &str) -> Option<[f32; 3]> {
 
 /// `(origin, yaw degrees)` of the first spawn in classname priority order.
 pub fn find_spawn(entities: &str) -> Option<([f32; 3], f32)> {
-    const CLASSES: [&str; 4] = [
+    const CLASSES: [&str; 7] = [
         "mp_deathmatch_spawn",
         "mp_teamdeathmatch_spawn",
         "mp_deathmatch_intermission",
         "info_player_start",
+        "mp_dm_spawn",
+        "mp_tdm_spawn",
+        "mp_global_intermission",
     ];
     let blocks = entity_blocks(entities);
 
