@@ -1171,6 +1171,111 @@ fn reopen_fs(
     Ok(())
 }
 
+/// Try to load an IW4 (MW2) map from the local install.
+/// Returns Ok(None) if this is not an IW4 map or no install is found.
+fn try_load_iw4_map(map: &str, _fs: &Pk3Fs) -> Result<Option<vcod_common::bsp::Bsp>> {
+    use iw4::{AssetSink, ZoneMemory, ZoneStream, load_zone, open_zone};
+    use vcod_common::maplist::{find_mw2_install, iw4_map_available};
+
+    let install = match find_mw2_install() {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+
+    if !iw4_map_available(&install, map) {
+        return Ok(None);
+    }
+
+    let ff_path = install.join("zone").join("english").join(format!("{map}.ff"));
+    if !ff_path.exists() {
+        return Ok(None);
+    }
+
+    let zone = open_zone(&ff_path).map_err(|e| anyhow::anyhow!("cannot open {}: {e}", ff_path.display()))?;
+    let header = zone.header().map_err(|e| anyhow::anyhow!("cannot parse header: {e}"))?;
+
+    let mut memory = ZoneMemory::for_header(&header);
+    let mut stream = memory.stream(&zone.bytes).map_err(|e| anyhow::anyhow!("cannot create stream: {e:?}"))?;
+
+    // Capture only GfxWorld for rendering (skip ClipMap/MapEnts for now)
+    struct GfxCapture {
+        gfx_world: Option<iw4::GfxWorldGeometry>,
+    }
+
+    impl AssetSink for GfxCapture {
+        fn set_script_strings(&mut self, _strings: iw4::ScriptStrings) {}
+        fn begin_assets(&mut self, _count: usize) {}
+        fn load_asset(
+            &mut self,
+            s: &mut ZoneStream<'_>,
+            _index: usize,
+            ty: iw4::AssetType,
+            slot: iw4::Ptr,
+        ) -> iw4::Result<()> {
+            iw4::load_asset_at(s, ty, slot)?;
+            if let Some(g) = s.gfx_world() {
+                self.gfx_world = Some(g);
+            }
+            Ok(())
+        }
+    }
+
+    let mut capture = GfxCapture { gfx_world: None };
+    load_zone(&mut stream, &mut capture).map_err(|e| anyhow::anyhow!("cannot load zone: {e:?}"))?;
+
+    let gfx = match capture.gfx_world {
+        Some(g) => g,
+        None => return Err(anyhow::anyhow!("no GfxWorld found in {}", ff_path.display())),
+    };
+
+    // Build a minimal Bsp with just geometry (no collision, no entities yet)
+    let (verts, indices, soups, materials) = iw4::adapter::gfxworld_to_draw_geometry(&stream, &gfx)
+        .map_err(|e| anyhow::anyhow!("cannot convert geometry: {e}"))?;
+
+    let soup_count = soups.len() as u32;
+    let bsp = vcod_common::bsp::Bsp {
+        materials,
+        lightmaps: vec![vec![0u8; 512 * 512 * 3]; 16],
+        soups,
+        verts,
+        indices,
+        entities: String::new(),
+        planes: Vec::new(),
+        brush_sides: Vec::new(),
+        brushes: Vec::new(),
+        models: vec![vcod_common::bsp::Model {
+            mins: [-2048.0, -2048.0, -1024.0],
+            maxs: [2048.0, 2048.0, 1024.0],
+            first_soup: 0,
+            num_soups: soup_count,
+            first_brush: 0,
+            num_brushes: 0,
+        }],
+        cull_groups: Vec::new(),
+        cull_indices: Vec::new(),
+        portal_verts: Vec::new(),
+        occluders: Vec::new(),
+        occluder_plane_indices: Vec::new(),
+        occluder_edges: Vec::new(),
+        occluder_indices: Vec::new(),
+        aabb_nodes: Vec::new(),
+        cells: Vec::new(),
+        portals: Vec::new(),
+        nodes: Vec::new(),
+        leafs: Vec::new(),
+        pvs: None,
+        terrain: Vec::new(),
+        patches: Vec::new(),
+        collision_verts: Vec::new(),
+        collision_indices: Vec::new(),
+    };
+
+    log::info!("iw4: loaded {} from {} ({} verts, {} indices, {} surfaces)",
+        map, ff_path.display(), bsp.verts.len(), bsp.indices.len(), bsp.soups.len());
+
+    Ok(Some(bsp))
+}
+
 /// Parse the map, upload it to the GPU and hand back the live phase.
 #[allow(clippy::too_many_arguments)]
 fn load_map(
@@ -1183,13 +1288,17 @@ fn load_map(
     window: Option<&Window>,
     title: &mut String,
 ) -> Result<Phase> {
-    let Some(path) = fs.resolve_map(map) else {
-        bail!("map '{map}' did not resolve in the pk3 search path");
+    let bsp = if let Some(bsp) = try_load_iw4_map(map, fs)? {
+        bsp
+    } else {
+        let Some(path) = fs.resolve_map(map) else {
+            bail!("map '{map}' did not resolve in the pk3 search path");
+        };
+        let data = fs
+            .read(&path)
+            .with_context(|| format!("cannot read {path}"))?;
+        bsp::parse(&data).with_context(|| format!("cannot parse {path}"))?
     };
-    let data = fs
-        .read(&path)
-        .with_context(|| format!("cannot read {path}"))?;
-    let bsp = bsp::parse(&data).with_context(|| format!("cannot parse {path}"))?;
     // The ambient rides configstring 3 (docs/research/cod11-sound-system.md,
     // section 9); a fresh gamestate may have changed it.
     audio.set_ambient(fs, net::info_value_for_key(net.configstring(3), "n"));

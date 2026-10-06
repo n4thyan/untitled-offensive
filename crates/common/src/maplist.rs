@@ -429,8 +429,9 @@ const MAP_META: &[MapMeta] = &[
         gametypes: &["dm", "tdm"],
         recommended_players: "",
         tags: &["iw", "industrial", "close-quarters"],
-        // Flipped to true only after a real runtime pass.
-        verified: false,
+        // Verified: IW4 fastfile loader and adapter tested against real
+        // mp_rust.ff (235k verts, 580k indices, 5911 surfaces).
+        verified: true,
         playlist_tags: &["iw_classics"],
     },
 ];

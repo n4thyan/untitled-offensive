@@ -11,6 +11,7 @@ description = "Call of Duty (2003) map viewer and spectator client"
 
 [dependencies]
 vcod-common.workspace = true
+iw4 = { path = "../iw4" }
 anyhow.workspace = true
 bytemuck.workspace = true
 clap.workspace = true
