@@ -98,6 +98,28 @@ impl Vote {
         self.is_open()
     }
 
+    /// Open a vote from a registry, restricted to one playlist's pool. Same
+    /// rules as [`Self::open_from_registry`], but the candidates come only
+    /// from maps the playlist offers - a Quick Play vote never offers an IW
+    /// map, and a Classic vote never offers a community one.
+    pub fn open_from_playlist(
+        &mut self,
+        registry: &MapRegistry,
+        playlist: &crate::maplist::Playlist,
+        current: &str,
+        count: usize,
+        now_ms: i32,
+    ) -> bool {
+        let offset = registry.index_of(current).unwrap_or(0);
+        let candidates: Vec<String> = registry
+            .candidates_in_playlist(playlist, current, count, offset)
+            .into_iter()
+            .map(|m| m.id.clone())
+            .collect();
+        self.open(candidates, now_ms);
+        self.is_open()
+    }
+
     pub fn clear(&mut self) {
         *self = Vote::default();
     }

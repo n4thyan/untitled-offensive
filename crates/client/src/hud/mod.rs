@@ -12,6 +12,7 @@ pub mod scoreboard;
 pub mod screens;
 pub mod shell;
 pub mod status;
+pub mod vote;
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -90,6 +91,12 @@ pub struct HudFrame<'a> {
     /// menu so a class edit is never hidden behind a team or weapon menu the
     /// server still has up.
     pub createaclass: Option<&'a createaclass::CreateAClass>,
+    /// The end-of-match map-vote panel, when a vote is open. Drawn over the
+    /// intermission.
+    pub vote: Option<&'a vote::VotePanel>,
+    /// The map registry, so the vote panel can show friendly map names rather
+    /// than raw ids. `None` outside a match.
+    pub registry: Option<&'a vcod_common::maplist::MapRegistry>,
     /// A client-owned menu screen (the main menu, the pause menu, the class
     /// picker). Drawn on top of everything, including the script menu, because
     /// it is the thing the player is deliberately looking at.
@@ -298,6 +305,25 @@ impl Hud {
                 &mut out,
             );
         }
+        // The end-of-match vote, over the intermission. Below the client-owned
+        // screens: a pause menu still owns the view.
+        if let Some(panel) = f.vote {
+            let name_of = |id: &str| -> String {
+                f.registry
+                    .and_then(|r| r.get(id))
+                    .map(|m| m.name.clone())
+                    .unwrap_or_else(|| id.to_string())
+            };
+            vote::build(
+                panel,
+                &self.font_text,
+                HUD_SCALE,
+                f.screen_h,
+                f.server_time,
+                &name_of,
+                &mut out,
+            );
+        }
         // Last, so the open menu sits on top of everything else.
         if let Some(view) = f.menu {
             menu::build(
@@ -427,6 +453,8 @@ mod tests {
             fs,
             menu: None,
             createaclass: None,
+            vote: None,
+            registry: None,
             shell: None,
             ps: Some(ps),
             predicted,

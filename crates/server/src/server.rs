@@ -21,6 +21,8 @@ use std::net::{IpAddr, SocketAddr};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use vcod_common::classes::ClassSlot;
+use vcod_common::maplist::MapRegistry;
+use vcod_common::mapvote::Vote;
 use vcod_common::movetrace::CONTENTS_CORPSE;
 use vcod_common::net::connectionless::{build_oob, parse_connect, parse_oob, Info};
 use vcod_common::net::gamestate::{self, Gamestate};
@@ -935,6 +937,19 @@ pub struct Server {
     /// The Create-a-Class profiles, by client name. Loaded once at startup
     /// and shared by every level; what a spawn reads to build a loadout.
     classes: crate::classes::Classes,
+    /// The map registry a vote draws its candidates from. Discovered from the
+    /// paks when `load_scripts` mounts them; empty until then, and empty on a
+    /// host with no paks, so a vote simply never opens.
+    registry: MapRegistry,
+    /// The end-of-match map vote, server-authoritative. Idle (closed) until an
+    /// `exitlevel` opens it; the winner is fed back through `map <id>`.
+    vote: Vote,
+    /// Whether a vote has already been opened for the level now running, so a
+    /// script that calls `exitlevel` twice does not open two ballots.
+    vote_opened: bool,
+    /// The playlist a vote's candidates are drawn from, by id. `None` means
+    /// the whole registry - what an unconfigured dedicated server gets.
+    vote_playlist: Option<&'static str>,
 }
 
 /// A follower's frame: the followed client's number, its playerstate with
@@ -1072,6 +1087,10 @@ impl Server {
             bot_enemies: BTreeMap::new(),
             archive: Default::default(),
             classes: crate::classes::Classes::new(None),
+            registry: MapRegistry::default(),
+            vote: Vote::default(),
+            vote_opened: false,
+            vote_playlist: None,
         };
         // `(rand() << 16) ^ rand() ^ Sys_Milliseconds()`, SV_SpawnServer 0x808a3e0.
         sv.checksum_feed = (sv.rand() << 16) ^ sv.rand() ^ (now.elapsed().as_millis() as i32);
@@ -1649,6 +1668,16 @@ impl Server {
                     Ok(path) => log::info!("classes: saved {name:?} to {}", path.display()),
                     Err(e) => log::warn!("classes: save {name:?}: {e}"),
                 }
+            }
+            // `vote <index>`: a human's end-of-match map vote. Server-
+            // authoritative; the index names a candidate the server offered.
+            // Bots never send client commands, so they never vote.
+            "vote" => {
+                let Some(index) = args.trim().parse::<usize>().ok() else {
+                    log::debug!("client {slot}: vote needs an index");
+                    return true;
+                };
+                self.cast_map_vote(slot, index);
             }
             // `Cmd_Kill_f`: the same death `self suicide()` gives, asked for
             // by the client. The retail hit capture's death half is this
@@ -2625,6 +2654,10 @@ impl Server {
             };
             self.weapon_table = Rc::new(crate::weapons::WeaponTable::load(&fs));
             self.hitlocs = crate::game::combat::HitLocTable::load(&fs);
+            // The paks are mounted now, so the map registry a vote draws from
+            // can be discovered. Later-engine maps are added by the binary,
+            // which knows the local install; the server only reads the paks.
+            self.registry = MapRegistry::discover(&fs);
         }
         // `game[]` and `pers[]` are the script's and go only under
         // `savePersist`; the item registry is the engine's and survives a
@@ -3131,17 +3164,36 @@ impl Server {
                     } else {
                         self.spawn_server(&map)
                     };
+                    // A new level may open its own end-of-match vote.
+                    self.vote.clear();
+                    self.vote_opened = false;
                     if !self.absorb_load(&format!("map {map}"), r) {
                         return;
                     }
                 }
                 console::Command::MapRestart => {
                     let r = self.map_restart();
+                    self.vote.clear();
+                    self.vote_opened = false;
                     if !self.absorb_load("map_restart", r) {
                         return;
                     }
                 }
                 console::Command::MapRotate => {
+                    // A rotation at the end of a level is what opens the vote.
+                    // The vote, when it resolves, feeds its own `map <id>` (or
+                    // a replay `map_rotate`) back through this same path, so
+                    // the guard is `vote_opened`: a level votes once.
+                    if !self.vote_opened
+                        && self.script_cvar("scr_allow_vote").as_deref() != Some("0")
+                        && self.vote_pool().len() >= 2
+                    {
+                        self.open_map_vote();
+                        // The vote is open: the rotation waits for it.
+                        if self.vote.is_open() {
+                            continue;
+                        }
+                    }
                     let full = self.sv_map_rotation.clone();
                     let before = self.cfg.gametype.clone();
                     let mut gametype = before.clone();
@@ -3170,6 +3222,127 @@ impl Server {
                 console::Command::Unknown(l) => log::warn!("console: unknown command {l:?}"),
             }
         }
+    }
+
+    /// The registry a vote draws from: the whole registry, or one playlist's
+    /// pool. A vote never crosses playlists.
+    fn vote_pool(&self) -> Vec<String> {
+        let ids = |maps: Vec<&vcod_common::maplist::PlayableMap>| -> Vec<String> {
+            maps.into_iter().map(|m| m.id.clone()).collect()
+        };
+        match self.vote_playlist.and_then(vcod_common::maplist::playlist_by_id) {
+            Some(p) => ids(self.registry.in_playlist(p)),
+            None => self.registry.maps().iter().collect::<Vec<_>>().into_iter().map(|m| m.id.clone()).collect(),
+        }
+    }
+
+    /// Open the end-of-match vote. The candidates are the current map's pool,
+    /// minus the map just played, capped at three. A pool too small to offer a
+    /// choice leaves the vote closed, and the caller falls back to a rotation
+    /// or a replay. Idempotent within one level: a second `exitlevel` does not
+    /// reopen it.
+    pub fn open_map_vote(&mut self) {
+        if self.vote.is_open() || self.vote_opened {
+            return;
+        }
+        self.vote_opened = true;
+        let current = self.cfg.map.clone();
+        let pool = self.vote_pool();
+        if pool.len() < 2 {
+            return;
+        }
+        let offset = pool.iter().position(|m| *m == current).unwrap_or(0);
+        let others: Vec<String> = pool.iter().filter(|m| **m != current).cloned().collect();
+        if others.is_empty() {
+            return;
+        }
+        let start = offset % others.len();
+        let candidates: Vec<String> = (0..3.min(others.len()))
+            .map(|i| others[(start + i) % others.len()].clone())
+            .collect();
+        self.vote.open(candidates.clone(), self.sv_time_ms);
+        log::info!(
+            "mapvote: opened on {} ({})",
+            candidates.join(", "),
+            self.vote_playlist.unwrap_or("all maps")
+        );
+        for slot in 0..self.clients.len() {
+            if self.clients[slot].is_some() {
+                let cmd = self.map_vote_command();
+                self.send_server_command(slot, &cmd);
+            }
+        }
+    }
+
+    /// The `mapvote` serverCommand the client reads: `mapvote <deadline_ms>
+    /// <candidate>...`. The client shows the candidates and sends
+    /// `vote <index>` back. A closed vote sends `mapvote close`.
+    fn map_vote_command(&self) -> String {
+        if !self.vote.is_open() {
+            return "mapvote close".to_string();
+        }
+        let mut s = format!("mapvote {}", self.vote.deadline_ms());
+        for c in self.vote.candidates() {
+            s.push(' ');
+            s.push_str(c);
+        }
+        s
+    }
+
+    /// Take a human's vote. Bots never reach here: they do not send client
+    /// commands. An index that does not name a candidate is refused.
+    pub fn cast_map_vote(&mut self, slot: usize, index: usize) -> bool {
+        if self.vote.cast(slot, index) {
+            log::info!("mapvote: client {slot} voted {index}");
+            true
+        } else {
+            log::debug!("mapvote: client {slot} vote {index} refused");
+            false
+        }
+    }
+
+    /// Resolve a due vote: broadcast the winner, then feed it back through the
+    /// ordinary `map <id>` console path. No votes is a replay. Called once per
+    /// tick while a vote is open.
+    fn step_map_vote(&mut self) {
+        if !self.vote.is_open() {
+            return;
+        }
+        if !self.vote.expired(self.sv_time_ms) {
+            return;
+        }
+        let result = self.vote.resolve();
+        let next = match result {
+            vcod_common::mapvote::Result::Map(id, tally) => {
+                let summary: Vec<String> =
+                    tally.iter().map(|(m, n)| format!("{m} x{n}")).collect();
+                log::info!("mapvote: resolved -> {id} ({})", summary.join(", "));
+                Some(id)
+            }
+            vcod_common::mapvote::Result::Replay => {
+                log::info!("mapvote: no votes, replaying {}", self.cfg.map);
+                None
+            }
+        };
+        for slot in 0..self.clients.len() {
+            if self.clients[slot].is_some() {
+                self.send_server_command(slot, "mapvote close");
+            }
+        }
+        match next {
+            Some(id) => self.console.push_front(format!("map {id}")),
+            None => self.console.push_front("map_rotate".to_string()),
+        }
+    }
+
+    /// Set the playlist a vote draws from. `None` means the whole registry.
+    pub fn set_vote_playlist(&mut self, playlist: Option<&'static str>) {
+        self.vote_playlist = playlist;
+    }
+
+    /// Replace the registry a vote draws from, e.g. after the paks mounted.
+    pub fn set_registry(&mut self, registry: MapRegistry) {
+        self.registry = registry;
     }
 
     const FALLBACK_SPAWN: ([f32; 3], f32) = ([0.0, 0.0, 64.0], 0.0);
@@ -3248,6 +3421,7 @@ impl Server {
 
     pub fn tick(&mut self, now: Instant) {
         self.drain_console();
+        self.step_map_vote();
         self.check_timeouts(now);
         self.step_bots();
         self.sv_time_ms = self.sv_time_ms.wrapping_add(FRAME_MS);

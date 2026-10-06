@@ -5,6 +5,7 @@ mod fx;
 mod hud;
 mod hud_text;
 mod loading;
+mod local_server;
 mod play;
 mod probe;
 mod quick_chat;
@@ -29,6 +30,7 @@ use vcod_common::pk3::Pk3Fs;
 use vcod_common::{bsp, collision, mesh, net, pmove, props, weapon, xmodel};
 
 use camera::{FlyCamera, InputState};
+use local_server::{LocalServer, MatchConfig, DEFAULT_LOCAL_PORT};
 use renderer::{DynamicModelInstance, Renderer};
 
 #[derive(Parser)]
@@ -418,6 +420,15 @@ fn live_phase(fs: &Pk3Fs, bsp: &bsp::Bsp, net: &net::NetClient<net::UdpTransport
 }
 
 enum Mode {
+    /// The menu-only mode: no world, no server, no connection - just the
+    /// client-owned screens. What Leave Match returns to, so a player is never
+    /// stuck in a match they cannot exit.
+    Menu {
+        /// The client-owned menu screens.
+        screens: Box<hud::screens::Screens>,
+        /// The menu currently drawn.
+        screen_menu: Option<hud::shell::Menu>,
+    },
     Fly(FlyCamera),
     /// Position follows the interpolated playerstate. The client joins
     /// through the stock menus and plays or spectates as the snapshot says.
@@ -454,6 +465,9 @@ enum Mode {
         /// arrive. Create-a-Class and the picker read it, so neither can show
         /// a class the server does not have.
         profile: vcod_common::classes::wire::ProfileSync,
+        /// The end-of-match map-vote panel, driven by the server's `mapvote`
+        /// commands. Empty when no vote is open.
+        vote: hud::vote::VotePanel,
     },
     Walk {
         /// Boxed to keep the variants a similar size.
@@ -519,8 +533,61 @@ fn digit_slot(code: KeyCode) -> Option<usize> {
 }
 
 /// The playable maps this install offers, for the menu's map selector.
+///
+/// Discovery is from the paks, plus the later-engine maps whose source data is
+/// present locally: a native MW2 map is offered only when the user actually has
+/// the install it reads from.
 fn maplist_for(fs: &Pk3Fs) -> vcod_common::maplist::MapRegistry {
-    vcod_common::maplist::MapRegistry::discover(fs)
+    let mut registry = vcod_common::maplist::MapRegistry::discover(fs);
+    if let Some(install) = vcod_common::maplist::find_mw2_install() {
+        registry.include_iw4(|id| vcod_common::maplist::iw4_map_available(&install, id));
+    }
+    registry
+}
+
+/// The Create-a-Class profile directory a locally-spawned server reads. Prefers
+/// the repository-relative path (the client is normally run from the repo root),
+/// then one beside the executable.
+fn find_classes_dir(exe_dir: &std::path::Path) -> std::path::PathBuf {
+    let cwd = std::path::PathBuf::from("assets/classes");
+    if cwd.is_dir() {
+        return cwd;
+    }
+    let beside = exe_dir.join("assets/classes");
+    if beside.is_dir() {
+        return beside;
+    }
+    cwd
+}
+
+/// A fresh `--connect` mode: the state machine, the join handshake and the
+/// client-owned screens, over a new net client. Factored out so a locally
+/// spawned match and a command-line `--connect` build exactly the same mode.
+fn online_mode(
+    net: net::NetClient<net::UdpTransport>,
+    fs: &Pk3Fs,
+    team: Option<String>,
+    weapon: Option<String>,
+) -> Mode {
+    Mode::Online {
+        net: Box::new(net),
+        cam: FlyCamera::new(Vec3::ZERO, 0.0),
+        input: Box::default(),
+        clock: play::cmds::CmdClock::default(),
+        ring: play::cmds::CmdRing::default(),
+        predictor: Box::default(),
+        view: Box::default(),
+        phase: Phase::Connecting {
+            since: Instant::now(),
+        },
+        join: Box::new(play::join::Join::new(team, weapon)),
+        menu_view: None,
+        createaclass: None,
+        screens: Box::new(hud::screens::Screens::new(maplist_for(fs))),
+        screen_menu: None,
+        profile: vcod_common::classes::wire::ProfileSync::new(),
+        vote: hud::vote::VotePanel::default(),
+    }
 }
 
 /// Retail's `config_mp.cfg` binds for `--connect`; the mouse buttons and
@@ -688,6 +755,7 @@ fn hud_lines(
         )
     };
     match mode {
+        Mode::Menu { .. } => lines.push("menu: multiplayer (no match)".to_string()),
         Mode::Fly(cam) => lines.push(cam_line("fly", cam.pos, cam.yaw, cam.pitch)),
         Mode::Walk { ps, .. } => {
             lines.push(cam_line("walk", ps.origin, ps.yaw, ps.pitch));
@@ -901,27 +969,7 @@ fn main() -> Result<()> {
 
     let (mode, world, title) = if let Some(net) = net_client {
         (
-            Mode::Online {
-                net: Box::new(net),
-                cam: FlyCamera::new(Vec3::ZERO, 0.0),
-                input: Box::default(),
-                clock: play::cmds::CmdClock::default(),
-                ring: play::cmds::CmdRing::default(),
-                predictor: Box::default(),
-                view: Box::default(),
-                phase: Phase::Connecting {
-                    since: Instant::now(),
-                },
-                join: Box::new(play::join::Join::new(
-                    args.team.clone(),
-                    args.weapon.clone(),
-                )),
-                menu_view: None,
-                createaclass: None,
-                screens: Box::new(hud::screens::Screens::new(maplist_for(&fs))),
-                screen_menu: None,
-                profile: vcod_common::classes::wire::ProfileSync::new(),
-            },
+            online_mode(net, &fs, args.team.clone(), args.weapon.clone()),
             None,
             "vcod — connecting".to_string(),
         )
@@ -962,6 +1010,14 @@ fn main() -> Result<()> {
 
     fx::registry::init(&fs);
 
+    // Where a locally-spawned dedicated server lives, and what it needs to see
+    // the same maps and classes this client does.
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let classes_dir = find_classes_dir(&exe_dir);
+
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App {
@@ -996,6 +1052,10 @@ fn main() -> Result<()> {
         audio,
         quick_chat: quick_chat::QuickChat::new(0x51ee),
         error: None,
+        exe_dir,
+        overlay_dir: args.overlay_dir.clone(),
+        classes_dir,
+        local_server: None,
     };
     event_loop.run_app(&mut app)?;
     match app.error.take() {
@@ -1156,13 +1216,16 @@ fn loading_frame(
     cull: renderer::CullMode,
     configstrings: &[String],
     text: String,
+    shell: Option<(&hud::shell::Menu, &str)>,
 ) -> renderer::Frame {
     if let Some(hud) = hud {
         let (screen_w, screen_h) = r.screen_size();
         let no_clients = BTreeMap::new();
         let f = hud::HudFrame {
             createaclass: None,
-            shell: None,
+            vote: None,
+            registry: None,
+            shell,
             now,
             screen_w,
             screen_h,
@@ -1323,6 +1386,17 @@ struct App {
     audio: audio::AudioSystem,
     quick_chat: quick_chat::QuickChat,
     error: Option<anyhow::Error>,
+    /// The directory holding `vcod.exe` and its sibling `vcod-server.exe`, so
+    /// a local match can be spawned without a hard-coded path.
+    exe_dir: std::path::PathBuf,
+    /// The pk3 overlay the client resolved its own content from, passed to a
+    /// locally-spawned server so it sees the same maps.
+    overlay_dir: Option<std::path::PathBuf>,
+    /// The Create-a-Class profile directory a locally-spawned server reads.
+    classes_dir: std::path::PathBuf,
+    /// The dedicated server this client started, if any. `None` means either
+    /// no match, or a match the client did not own.
+    local_server: Option<LocalServer>,
 }
 
 impl App {
@@ -1357,6 +1431,7 @@ impl App {
     /// and the `--connect` stance stay, neither is a held key. The scoreboard drops, Tab is held too.
     fn clear_held_keys(&mut self) {
         match &mut self.mode {
+            Mode::Menu { .. } => {}
             Mode::Fly(_) => self.input = InputState::default(),
             Mode::Online { input, .. } => input.release_all(),
             Mode::Walk {
@@ -1400,11 +1475,23 @@ impl App {
             join,
             menu_view,
             createaclass,
+            vote,
             ..
         } = &mut self.mode
         else {
             return false;
         };
+        // The map vote is an overlay, not a modal: its digit keys are claimed
+        // before any gameplay binding, but only while a vote is actually open.
+        if vote.is_open() {
+            if let Some(index) = vote_digit(code) {
+                if vote.choose(index) {
+                    log::info!("mapvote: voting {index}");
+                    net.send_reliable(&format!("vote {index}"));
+                }
+                return true;
+            }
+        }
         // Create-a-Class takes priority over the script menu while it is up:
         // arrow keys that would move a menu selection move the grid instead.
         if let Some(cac) = createaclass.as_mut() {
@@ -1492,17 +1579,10 @@ impl App {
     /// The menu the key acts on is rebuilt from [`hud::screens::Screens`]
     /// first, so a stepped value is applied to the state that is actually
     /// held; it is then written back for the render loop to draw.
+    ///
+    /// Works in both [`Mode::Online`] and [`Mode::Menu`]: the screens own the
+    /// key either way, and M opens the main menu when no screen is up.
     fn screen_key(&mut self, code: KeyCode) -> bool {
-        // M opens the main menu when nothing else owns the key. Checked before
-        // the screen arm so M is available both in game and from a screen.
-        let Mode::Online {
-            screens,
-            screen_menu,
-            ..
-        } = &mut self.mode
-        else {
-            return false;
-        };
         let key = match code {
             KeyCode::ArrowUp => hud::screens::MenuKey::Up,
             KeyCode::ArrowDown => hud::screens::MenuKey::Down,
@@ -1512,58 +1592,63 @@ impl App {
             KeyCode::Escape => hud::screens::MenuKey::Back,
             _ => hud::screens::MenuKey::None,
         };
-        if screens.captures_input() {
-            // Reuse the menu already on screen so the cursor survives across
-            // keypresses; it is rebuilt only when a screen opens (and when the
-            // class list changes, below). Rebuilding per key would reset the
-            // selection to the first row on every press.
-            let mut menu = screen_menu
-                .take()
-                .unwrap_or_else(|| screens.menu().expect("a screen is up"));
-            let (_, action) = screens.handle_key(&mut menu, key);
-            *screen_menu = Some(menu);
-            if let Some(action) = action {
-                self.run_screen_action(action);
+        // The action, taken while the mode is borrowed, run after.
+        let mut action = None;
+        let mut consumed = false;
+        match &mut self.mode {
+            Mode::Online {
+                screens,
+                screen_menu,
+                ..
+            } => {
+                if screens.captures_input() {
+                    // Reuse the menu already on screen so the cursor survives
+                    // across keypresses; it is rebuilt only when a screen opens
+                    // (and when the class list changes). Rebuilding per key
+                    // would reset the selection to the first row on every press.
+                    let mut menu = screen_menu
+                        .take()
+                        .unwrap_or_else(|| screens.menu().expect("a screen is up"));
+                    let (_, a) = screens.handle_key(&mut menu, key);
+                    *screen_menu = Some(menu);
+                    action = a;
+                    consumed = true;
+                } else if code == KeyCode::KeyM {
+                    screens.open(hud::screens::Screen::Main);
+                    *screen_menu = screens.menu();
+                    consumed = true;
+                }
             }
-            return true;
+            Mode::Menu {
+                screens,
+                screen_menu,
+            } => {
+                let mut menu = screen_menu
+                    .take()
+                    .unwrap_or_else(|| screens.menu().expect("the menu mode has a screen"));
+                let (_, a) = screens.handle_key(&mut menu, key);
+                *screen_menu = Some(menu);
+                action = a;
+                consumed = true;
+            }
+            _ => {}
         }
-        // No screen up: M opens the main menu. B still opens the developer
-        // Create-a-Class editor directly - it is a debug shortcut now, and the
-        // normal flow is the menu's Create-a-Class row.
-        if code == KeyCode::KeyM {
-            screens.open(hud::screens::Screen::Main);
-            *screen_menu = screens.menu();
-            return true;
+        if let Some(action) = action {
+            self.run_screen_action(action);
         }
-        false
+        consumed
     }
 
     /// Carry out a screen's action. Split out because it needs `&mut self`
     /// whole, while `screen_key` holds a borrow of the mode.
     fn run_screen_action(&mut self, action: hud::screens::Action) {
-        use hud::screens::{Action, Screen};
+        use hud::screens::Action;
         match action {
             Action::Open(screen) => {
-                if let Mode::Online {
-                    screens,
-                    screen_menu,
-                    ..
-                } = &mut self.mode
-                {
-                    screens.open(screen);
-                    *screen_menu = screens.menu();
-                }
+                self.screen_open(screen);
             }
             Action::Close => {
-                if let Mode::Online {
-                    screens,
-                    screen_menu,
-                    ..
-                } = &mut self.mode
-                {
-                    screens.close();
-                    *screen_menu = None;
-                }
+                self.screen_close();
                 // A menu closing restores gameplay input cleanly: no held key
                 // stays latched and the mouse is re-captured.
                 self.set_grab(true);
@@ -1613,23 +1698,14 @@ impl App {
                     *screen_menu = None;
                 }
             }
-            Action::LeaveMatch | Action::Quit => {
-                // No clean "leave" path yet without a socket teardown the
-                // client does not own; the honest behaviour is to return to the
-                // menu and let the player close the window. Logged so it is not
-                // silently a no-op.
-                log::info!("menu: leave requested (no disconnect path yet)");
-                if let Mode::Online {
-                    screens,
-                    screen_menu,
-                    ..
-                } = &mut self.mode
-                {
-                    screens.open(Screen::Main);
-                    *screen_menu = screens.menu();
-                }
+            Action::LeaveMatch => {
+                self.leave_match();
+            }
+            Action::Quit => {
+                std::process::exit(0);
             }
             Action::StartMatch {
+                playlist,
                 map,
                 gametype,
                 bots,
@@ -1642,16 +1718,177 @@ impl App {
                     debug_assert_eq!(screens.bot_combat(), bot_combat);
                     debug_assert_eq!(screens.selected_map(), Some(map.as_str()));
                 }
-                // The local match is started through the launcher path in a
-                // later step; until then the row is honest about it.
+                self.start_match(MatchConfig {
+                    map,
+                    gametype,
+                    bots,
+                    bot_combat,
+                });
                 log::info!(
-                    "menu: start match {map} {gametype} {bots} bots, bot_combat={bot_combat} (launcher path pending)"
+                    "menu: start match in playlist {playlist}, {bots} bots, bot_combat={bot_combat}"
                 );
             }
             Action::Nothing => {}
         }
     }
 
+    /// Open a screen on whichever mode is up.
+    fn screen_open(&mut self, screen: hud::screens::Screen) {
+        match &mut self.mode {
+            Mode::Online {
+                screens,
+                screen_menu,
+                ..
+            } => {
+                screens.open(screen);
+                *screen_menu = screens.menu();
+            }
+            Mode::Menu {
+                screens,
+                screen_menu,
+            } => {
+                screens.open(screen);
+                *screen_menu = screens.menu();
+            }
+            _ => {}
+        }
+    }
+
+    /// Close the current screen on whichever mode is up.
+    fn screen_close(&mut self) {
+        match &mut self.mode {
+            Mode::Online {
+                screens,
+                screen_menu,
+                ..
+            } => {
+                screens.close();
+                *screen_menu = None;
+            }
+            Mode::Menu {
+                screens,
+                screen_menu,
+            } => {
+                screens.close();
+                *screen_menu = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Start a match the client owns: spawn a dedicated server on a loopback
+    /// port, then connect to it. Replaces the whole mode, so it works both from
+    /// a running match and from the menu-only mode.
+    fn start_match(&mut self, cfg: MatchConfig) {
+        // A previous local server is stopped first: starting a second match
+        // while one is running would leave the first orphaned.
+        if let Some(mut old) = self.local_server.take() {
+            old.stop();
+        }
+
+        let log_dir = std::path::PathBuf::from("dev-logs");
+        let mut port = DEFAULT_LOCAL_PORT;
+        let mut server = None;
+        for _ in 0..4 {
+            match LocalServer::spawn(
+                &self.exe_dir,
+                &self.game_dir,
+                &self.mod_dir,
+                self.overlay_dir.as_deref(),
+                &self.classes_dir,
+                &cfg,
+                port,
+                &log_dir,
+            ) {
+                Ok(s) => {
+                    server = Some(s);
+                    break;
+                }
+                Err(e) => {
+                    log::warn!("menu: local server on udp/{port} failed: {e:#}");
+                    port = local_server::next_port(port);
+                }
+            }
+        }
+        let Some(server) = server else {
+            log::error!("menu: could not start a local match after several ports");
+            self.notify("Could not start the server - see dev-logs/");
+            return;
+        };
+
+        let addr = server.addr();
+        match net::NetClient::connect(&addr) {
+            Ok(net) => {
+                let mode = online_mode(net, &self.fs, None, None);
+                // Seed the new mode's registry with the maps this install
+                // offers, including any later-engine ones.
+                self.local_server = Some(server);
+                self.connect_addr = Some(addr.clone());
+                self.mode = mode;
+                // The menu opens on Main over the connecting screen.
+                self.screen_open(hud::screens::Screen::Main);
+                self.set_grab(false);
+                if let Some(s) = &self.local_server {
+                    log::info!(
+                        "menu: connecting to the local match on {} (server log: {})",
+                        addr,
+                        s.log_path().map_or_else(
+                            || "none".to_string(),
+                            |p| p.display().to_string()
+                        )
+                    );
+                }
+            }
+            Err(e) => {
+                let mut server = server;
+                server.stop();
+                log::error!("menu: cannot connect to the local server on {addr}: {e:#}");
+                self.notify("Could not connect to the local match");
+            }
+        }
+    }
+
+    /// Leave the current match: disconnect, stop a server the client started,
+    /// and return to the menu-only mode. A server the client did not start is
+    /// left alone - it is not this client's to stop.
+    fn leave_match(&mut self) {
+        if let Mode::Online { net, .. } = &mut self.mode {
+            net.disconnect();
+        }
+        if let Some(mut server) = self.local_server.take() {
+            server.stop();
+        } else if matches!(self.mode, Mode::Online { .. }) {
+            log::info!("menu: left an external match (no local server to stop)");
+        }
+        self.connect_addr = None;
+        let screens = hud::screens::Screens::new(maplist_for(&self.fs));
+        let mut screens = Box::new(screens);
+        screens.open(hud::screens::Screen::Main);
+        let screen_menu = screens.menu();
+        self.mode = Mode::Menu {
+            screens,
+            screen_menu,
+        };
+        self.set_grab(false);
+        log::info!("menu: returned to the multiplayer menu");
+    }
+
+    /// Put a short line in the F3 overlay / log when an action failed. Kept
+    /// minimal: a modal error box is not worth building for two messages.
+    fn notify(&mut self, msg: &str) {
+        log::warn!("{msg}");
+        println!("{msg}");
+    }
+}
+
+/// The digit key that casts a map vote: 1-3 name the three candidates.
+fn vote_digit(code: KeyCode) -> Option<usize> {
+    Some(match code {
+        KeyCode::Digit1 => 0,
+        KeyCode::Digit2 => 1,
+        KeyCode::Digit3 => 2,
+        _ => return None,
+    })
 }
 
 /// A menu `execKey` name for the digit row.
@@ -1759,6 +1996,7 @@ impl ApplicationHandler for App {
                 }
                 let grabbed = self.grabbed;
                 match &mut self.mode {
+                    Mode::Menu { .. } => {}
                     Mode::Fly(_) => match code {
                         KeyCode::KeyW => self.input.forward = pressed,
                         KeyCode::KeyS => self.input.back = pressed,
@@ -1841,6 +2079,7 @@ impl ApplicationHandler for App {
                     return;
                 }
                 match &mut self.mode {
+                    Mode::Menu { .. } => {}
                     Mode::Walk {
                         fire_edge,
                         fire_held,
@@ -1907,10 +2146,84 @@ impl ApplicationHandler for App {
                 let cull = self.cull_mode;
                 let Some(r) = &mut self.renderer else { return };
                 let aspect = r.aspect();
+                // A local match whose server exited on its own (a bad map, a
+                // port clash) is reported here rather than left as a silent
+                // connection failure; the net client then reports the drop.
+                let server_died = self
+                    .local_server
+                    .as_mut()
+                    .is_some_and(|s| !s.is_running());
+                if server_died {
+                    if let Some(s) = &self.local_server {
+                        log::error!(
+                            "menu: the local server on {} exited; check its log",
+                            s.addr()
+                        );
+                    }
+                    self.local_server = None;
+                }
                 // Set inside the online arm where `self` is borrowed out
                 // field-by-field; acted on once the borrows end.
                 let mut fatal: Option<anyhow::Error> = None;
                 let (mut frame, vm) = match &mut self.mode {
+                    Mode::Menu {
+                        screens,
+                        screen_menu,
+                    } => {
+                        // Menu-only: nothing is drawn but the menu over an
+                        // empty view. No world, no server, no net client.
+                        let _ = screens;
+                        if let Some(hud) = &mut self.hud {
+                            let (screen_w, screen_h) = r.screen_size();
+                            let no_clients = BTreeMap::new();
+                            let f = hud::HudFrame {
+                                createaclass: None,
+                                vote: None,
+                                registry: None,
+                                shell: screen_menu.as_ref().map(|m| (m, MENU_HINT)),
+                                now: time,
+                                screen_w,
+                                screen_h,
+                                configstrings: &[],
+                                clients: &no_clients,
+                                protocol: &net::protocol::PROTOCOL_V1,
+                                server_time: 0,
+                                snap_time: 0,
+                                fs: &self.fs,
+                                menu: None,
+                                ps: None,
+                                predicted: None,
+                                local_player: false,
+                                weapons: &[],
+                                localized: &self.localized,
+                                view_yaw: 0.0,
+                                eye: [0.0; 3],
+                                fov: camera::DEFAULT_FOV_DEG,
+                                entity_origin: &|_| None,
+                            };
+                            let quads = hud.build(&f);
+                            r.set_hud_quads(&self.fs, quads);
+                        }
+                        (
+                            renderer::Frame {
+                                // Nothing is drawn, so any projection works.
+                                view_proj: camera::view_proj_from(
+                                    Vec3::ZERO,
+                                    0.0,
+                                    0.0,
+                                    0.0,
+                                    camera::DEFAULT_FOV_DEG,
+                                    aspect,
+                                ),
+                                eye: Vec3::ZERO,
+                                fwd: camera::basis(0.0, 0.0).0,
+                                time,
+                                cull,
+                                hud_lines: Vec::new(),
+                            },
+                            None,
+                        )
+                    }
                     Mode::Fly(cam) => {
                         cam.update(&self.input, dt);
                         let (cam_forward, cam_right, cam_up) = camera::basis(cam.yaw, cam.pitch);
@@ -1954,6 +2267,7 @@ impl ApplicationHandler for App {
                         screens,
                         screen_menu,
                         profile,
+                        vote: vote_panel,
                     } => {
                         let mut vm = None;
                         let events = net.pump();
@@ -2002,6 +2316,12 @@ impl ApplicationHandler for App {
                                     }
                                     if tokens.first().is_some_and(|t| t == "n") {
                                         join.on_restart();
+                                    }
+                                    // The end-of-match map vote, before the
+                                    // join machine so its `mapvote` command is
+                                    // never logged as unknown.
+                                    if vote_panel.on_server_command(tokens) {
+                                        continue;
                                     }
                                     for cmd in join.on_server_command(
                                         tokens,
@@ -2137,6 +2457,7 @@ impl ApplicationHandler for App {
                                         "Connecting to {}...",
                                         self.connect_addr.as_deref().unwrap_or("?")
                                     ),
+                                    screen_menu.as_ref().map(|m| (m, MENU_HINT)),
                                 )
                             }
                             Phase::Loading { loader } => {
@@ -2204,6 +2525,7 @@ impl ApplicationHandler for App {
                                     cull,
                                     net.configstrings(),
                                     loading_text(&map, waited),
+                                    screen_menu.as_ref().map(|m| (m, MENU_HINT)),
                                 )
                             }
                             Phase::Live(live) => {
@@ -2237,6 +2559,7 @@ impl ApplicationHandler for App {
                                         cull,
                                         net.configstrings(),
                                         format!("Loading {map}"),
+                                        screen_menu.as_ref().map(|m| (m, MENU_HINT)),
                                     )
                                 } else {
                                     let LivePhase {
@@ -2474,6 +2797,8 @@ impl ApplicationHandler for App {
                                         fs: &self.fs,
                                         menu: menu_view.as_ref().map(|(_, v)| v),
                                         createaclass: createaclass.as_ref(),
+                                        vote: vote_panel.is_open().then_some(vote_panel),
+                                        registry: Some(screens.registry()),
                                         shell: screen_menu.as_ref().map(|m| (m, MENU_HINT)),
                                         ps: newest.map(|s| &s.ps),
                                         predicted: predicted
@@ -2962,6 +3287,7 @@ impl ApplicationHandler for App {
             }
             let (dx, dy) = (dx as f32, dy as f32);
             match &mut self.mode {
+                Mode::Menu { .. } => {}
                 Mode::Fly(cam) => cam.mouse_delta(dx, dy),
                 Mode::Online {
                     input, view, screens, ..

@@ -14,9 +14,17 @@
 //! [`Screens::captures_input`] and skips the usercmd build. That is what stops
 //! a menu keypress from also firing the weapon, and it is checked in one place
 //! rather than per binding.
+//!
+//! ## Playlists
+//!
+//! The Play screen is playlist-first: the playlist picks the map pool and the
+//! gametypes, and the map selector is constrained to that pool. The rules live
+//! in [`vcod_common::maplist::Playlist`], not here, so this file only reads
+//! them.
 
 use vcod_common::classes::Profile;
-use vcod_common::maplist::{MapRegistry, GAMETYPES, MAX_BOTS, MIN_BOTS};
+use vcod_common::maplist::{MapRegistry, PlayableMap, Playlist, MAX_BOTS, MIN_BOTS};
+use vcod_common::maplist::{GAMETYPES, PLAYLISTS};
 
 use super::shell::{Menu, Outcome, Row};
 
@@ -25,7 +33,7 @@ use super::shell::{Menu, Outcome, Row};
 pub enum Screen {
     /// The root multiplayer menu: Play, Create-a-Class, Stats, Options, Quit.
     Main,
-    /// Map / gametype / bots / bot combat, and START MATCH.
+    /// Playlist / map / gametype / bots / bot combat, and START MATCH.
     Play,
     /// Esc during a match: Resume, Change Class, Options, Leave Match.
     Pause,
@@ -43,6 +51,7 @@ pub enum Action {
     Close,
     /// Start a local match with these settings.
     StartMatch {
+        playlist: String,
         map: String,
         gametype: String,
         bots: usize,
@@ -66,7 +75,9 @@ pub struct Screens {
     current: Option<Screen>,
     /// The map registry the Play screen and the picker read.
     registry: MapRegistry,
-    /// The Play screen's held settings.
+    /// The Play screen's held settings. `map_index` indexes the *active
+    /// playlist's* map list, not the whole registry.
+    playlist: usize,
     map_index: usize,
     gametype: usize,
     bots: usize,
@@ -80,24 +91,42 @@ fn bot_choices() -> Vec<String> {
     (MIN_BOTS..=MAX_BOTS).map(|n| n.to_string()).collect()
 }
 
-fn gametype_choices() -> Vec<String> {
-    GAMETYPES
-        .iter()
-        .map(|(_, label)| (*label).to_string())
-        .collect()
+fn playlist_choices() -> Vec<String> {
+    PLAYLISTS.iter().map(|p| p.display_name.to_string()).collect()
 }
 
 fn on_off() -> Vec<String> {
     vec!["On".into(), "Off".into()]
 }
 
+/// The gametype labels a playlist offers, in its own order.
+fn gametype_choices(playlist: &Playlist) -> Vec<String> {
+    playlist
+        .gametypes
+        .iter()
+        .map(|id| {
+            GAMETYPES
+                .iter()
+                .find(|(gid, _)| gid == id)
+                .map(|(_, label)| (*label).to_string())
+                .unwrap_or_else(|| (*id).to_string())
+        })
+        .collect()
+}
+
+/// The gametype id at an index into a playlist's gametypes.
+fn gametype_id(playlist: &Playlist, index: usize) -> &'static str {
+    playlist.gametypes.get(index).copied().unwrap_or("dm")
+}
+
 impl Screens {
     /// A screens owner over a discovered map registry. The Play screen opens
-    /// on the first playable map, or on nothing when the registry is empty.
+    /// on the first playlist that has maps, or on the first playlist.
     pub fn new(registry: MapRegistry) -> Screens {
-        Screens {
+        let mut s = Screens {
             current: None,
             registry,
+            playlist: 0,
             map_index: 0,
             gametype: 0,
             // Eight bots is the recording default, and what the launcher is
@@ -105,7 +134,19 @@ impl Screens {
             bots: 8.min(MAX_BOTS),
             bot_combat: true,
             classes: Vec::new(),
-        }
+        };
+        s.playlist = s.first_populated_playlist();
+        s.bots = s.selected_playlist().default_bots.min(MAX_BOTS);
+        s
+    }
+
+    /// The first playlist with a playable map, so the screen does not open on
+    /// an empty pool when another one has maps. Falls back to the first.
+    fn first_populated_playlist(&self) -> usize {
+        PLAYLISTS
+            .iter()
+            .position(|p| !self.registry.in_playlist(p).is_empty())
+            .unwrap_or(0)
     }
 
     /// The screen that is up. Used by the render loop to decide what to draw.
@@ -139,7 +180,7 @@ impl Screens {
     /// clamp the Play screen's held map index so it still names a map.
     pub fn set_registry(&mut self, registry: MapRegistry) {
         self.registry = registry;
-        self.map_index = self.map_index.min(self.registry.len().saturating_sub(1));
+        self.clamp_map_index();
     }
 
     /// Refresh the class list the picker shows. Called when the profile sync
@@ -156,17 +197,29 @@ impl Screens {
         &self.classes
     }
 
+    /// The active playlist.
+    pub fn selected_playlist(&self) -> &'static Playlist {
+        PLAYLISTS.get(self.playlist).unwrap_or(&PLAYLISTS[0])
+    }
+
+    /// The maps the active playlist offers, in registry order.
+    pub fn playlist_maps(&self) -> Vec<&PlayableMap> {
+        self.registry.in_playlist(self.selected_playlist())
+    }
+
+    /// The metadata for the map the Play screen currently holds.
+    pub fn selected_map_meta(&self) -> Option<&PlayableMap> {
+        self.playlist_maps().get(self.map_index).copied()
+    }
+
     /// The current map id the Play screen holds.
     pub fn selected_map(&self) -> Option<&str> {
-        self.registry.id_at(self.map_index)
+        self.selected_map_meta().map(|m| m.id.as_str())
     }
 
     /// The current gametype id.
     pub fn selected_gametype(&self) -> &str {
-        GAMETYPES
-            .get(self.gametype)
-            .map(|(id, _)| *id)
-            .unwrap_or("dm")
+        gametype_id(self.selected_playlist(), self.gametype)
     }
 
     pub fn bot_count(&self) -> usize {
@@ -175,6 +228,15 @@ impl Screens {
 
     pub fn bot_combat(&self) -> bool {
         self.bot_combat
+    }
+
+    /// Keep the map index inside the active playlist's pool.
+    fn clamp_map_index(&mut self) {
+        let n = self.playlist_maps().len();
+        self.map_index = self.map_index.min(n.saturating_sub(1));
+        if n == 0 {
+            self.map_index = 0;
+        }
     }
 
     /// Build the menu for the current screen. `None` when no screen is up.
@@ -192,24 +254,7 @@ impl Screens {
                     Row::action("quit", "Quit"),
                 ],
             ),
-            Screen::Play => {
-                let maps = self.registry.names();
-                let mut rows = vec![Row::divider("MATCH SETUP")];
-                if maps.is_empty() {
-                    rows.push(Row::disabled("map", "Map:  (none playable)"));
-                } else {
-                    rows.push(Row::selector("map", "Map", maps));
-                }
-                rows.push(Row::selector("gametype", "Gametype", gametype_choices()));
-                rows.push(Row::selector("bots", "Bots", bot_choices()));
-                rows.push(Row::selector("botcombat", "Bot Combat", on_off()));
-                rows.push(Row::divider(""));
-                rows.push(Row::action("start", "START MATCH"));
-                rows.push(Row::action("back", "Back"));
-                let mut menu = Menu::new("PLAY", rows);
-                self.seed_play_values(&mut menu);
-                menu
-            }
+            Screen::Play => self.play_menu(),
             Screen::Pause => Menu::new(
                 "PAUSED",
                 vec![
@@ -235,11 +280,91 @@ impl Screens {
         })
     }
 
+    /// The match-setup screen: playlist first, then the map pool it defines,
+    /// then the settings, then the map's own info panel and the actions.
+    fn play_menu(&self) -> Menu {
+        let playlist = self.selected_playlist();
+        let maps: Vec<String> = self
+            .playlist_maps()
+            .iter()
+            .map(|m| m.name.clone())
+            .collect();
+
+        let mut rows = vec![Row::divider("MATCH SETUP")];
+        rows.push(Row::selector("playlist", "Playlist", playlist_choices()));
+        if maps.is_empty() {
+            rows.push(Row::disabled("map", "Map:  (none in this playlist)"));
+        } else {
+            rows.push(Row::selector("map", "Map", maps));
+        }
+        rows.push(Row::selector(
+            "gametype",
+            "Gametype",
+            gametype_choices(playlist),
+        ));
+        rows.push(Row::selector("bots", "Bots", bot_choices()));
+        rows.push(Row::selector("botcombat", "Bot Combat", on_off()));
+        rows.push(Row::divider(""));
+
+        // The map's own info, shown while the map row is on screen so the
+        // community author is visible in the UI, not buried in a readme.
+        rows.extend(self.map_info_rows());
+
+        rows.push(Row::divider(""));
+        rows.push(Row::action("start", "START MATCH"));
+        rows.push(Row::action("back", "Back"));
+        let mut menu = Menu::new("PLAY", rows);
+        self.seed_play_values(&mut menu);
+        menu
+    }
+
+    /// The non-selectable info lines for the held map.
+    fn map_info_rows(&self) -> Vec<Row> {
+        let Some(map) = self.selected_map_meta() else {
+            return Vec::new();
+        };
+        let mut rows = vec![Row::divider(format!("MAP: {}", map.name.to_uppercase()))];
+        if !map.description.is_empty() {
+            rows.push(Row::disabled("info", format!("  {}", map.description)));
+        }
+        rows.push(Row::disabled(
+            "info",
+            format!("  Author:  {}", credit_line(map)),
+        ));
+        rows.push(Row::disabled(
+            "info",
+            format!("  Source:  {}", map.source_type.label()),
+        ));
+        if !map.supported_gametypes.is_empty() {
+            rows.push(Row::disabled(
+                "info",
+                format!("  Modes:  {}", map.supported_gametypes.join(", ")),
+            ));
+        }
+        if !map.recommended_players.is_empty() {
+            rows.push(Row::disabled(
+                "info",
+                format!("  Players:  {}", map.recommended_players),
+            ));
+        }
+        rows
+    }
+
     /// Put the Play screen's held settings onto a freshly built menu, so the
     /// screen opens on the settings the player last chose rather than resetting.
     fn seed_play_values(&self, menu: &mut Menu) {
-        menu.set_selector("map", self.registry.names(), self.map_index);
-        menu.set_selector("gametype", gametype_choices(), self.gametype);
+        menu.set_selector("playlist", playlist_choices(), self.playlist);
+        let maps: Vec<String> = self
+            .playlist_maps()
+            .iter()
+            .map(|m| m.name.clone())
+            .collect();
+        menu.set_selector("map", maps, self.map_index);
+        menu.set_selector(
+            "gametype",
+            gametype_choices(self.selected_playlist()),
+            self.gametype,
+        );
         menu.set_selector("bots", bot_choices(), self.bots.saturating_sub(MIN_BOTS));
         menu.set_selector("botcombat", on_off(), usize::from(!self.bot_combat));
     }
@@ -301,16 +426,45 @@ impl Screens {
             return;
         }
         match id.as_str() {
+            "playlist" => {
+                if let Some(v) = menu.value_of("playlist") {
+                    if let Some(i) = playlist_choices().iter().position(|n| n == v) {
+                        self.playlist = i;
+                        // The map pool changed under the cursor: reset the map
+                        // and gametype to the new playlist's first entries, and
+                        // re-seed the rows that depend on it.
+                        self.map_index = 0;
+                        self.gametype = 0;
+                        self.bots = self.selected_playlist().default_bots.min(MAX_BOTS);
+                        let maps: Vec<String> = self
+                            .playlist_maps()
+                            .iter()
+                            .map(|m| m.name.clone())
+                            .collect();
+                        menu.set_selector("map", maps, self.map_index);
+                        menu.set_selector(
+                            "gametype",
+                            gametype_choices(self.selected_playlist()),
+                            self.gametype,
+                        );
+                        menu.set_selector("bots", bot_choices(), self.bots);
+                    }
+                }
+            }
             "map" => {
                 if let Some(v) = menu.value_of("map") {
-                    if let Some(i) = self.registry.names().iter().position(|n| n == v) {
+                    let maps = self.playlist_maps();
+                    if let Some(i) = maps.iter().position(|m| m.name == v) {
                         self.map_index = i;
                     }
                 }
             }
             "gametype" => {
                 if let Some(v) = menu.value_of("gametype") {
-                    if let Some(i) = gametype_choices().iter().position(|n| n == v) {
+                    if let Some(i) = gametype_choices(self.selected_playlist())
+                        .iter()
+                        .position(|n| n == v)
+                    {
                         self.gametype = i;
                     }
                 }
@@ -335,6 +489,7 @@ impl Screens {
             "quit" => Action::Quit,
             "start" => match self.selected_map() {
                 Some(map) => Action::StartMatch {
+                    playlist: self.selected_playlist().id.to_string(),
                     map: map.to_string(),
                     gametype: self.selected_gametype().to_string(),
                     bots: self.bots,
@@ -362,6 +517,20 @@ impl Screens {
     }
 }
 
+/// The credit line for a map: the author, plus additional credits when the
+/// readme named any. A map with no author is shown as unverified rather than
+/// silently credited to nobody.
+fn credit_line(map: &PlayableMap) -> String {
+    if !map.has_credit() {
+        return vcod_common::maplist::UNKNOWN_AUTHOR.to_string();
+    }
+    if map.additional_credits.is_empty() {
+        map.author.clone()
+    } else {
+        format!("{} ({})", map.author, map.additional_credits)
+    }
+}
+
 /// The keys a screen understands, mapped from the physical key by the caller.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuKey {
@@ -383,6 +552,7 @@ mod tests {
             "mp_carentan",
             "mp_pavlov",
             "mp_harbor",
+            "mp_stanjel",
         ]))
     }
 
@@ -408,7 +578,25 @@ mod tests {
         }
 
         fn key(&mut self, k: MenuKey) -> Option<Action> {
-            self.s.handle_key(&mut self.menu, k).1
+            let action = self.s.handle_key(&mut self.menu, k).1;
+            // The client rebuilds the drawn menu after an action that changed
+            // the screen; mirror that so the cursor is where the new screen
+            // put it.
+            if matches!(action, Some(Action::Open(_)) | Some(Action::Close)) {
+                self.refresh();
+            }
+            action
+        }
+
+        /// Move the cursor to the row with this id.
+        fn select_row(&mut self, id: &str) {
+            for _ in 0..self.menu.rows.len() {
+                if self.menu.selected_row().is_some_and(|r| r.id == id) {
+                    return;
+                }
+                self.menu.down();
+            }
+            panic!("no row {id}");
         }
     }
 
@@ -447,21 +635,20 @@ mod tests {
     }
 
     /// START MATCH carries the settings the player stepped, not the defaults.
+    /// The registry sorts by id, so the first populated playlist (Classic)
+    /// offers Carentan, Harbor, Pavlov; step to Pavlov.
     #[test]
     fn start_match_carries_the_chosen_settings() {
         let mut ui = Ui::new(Screen::Play);
-        // Map: the registry sorts by id, so the order is Carentan, Harbor,
-        // Pavlov; step twice to reach Pavlov.
+        assert_eq!(ui.s.selected_playlist().id, "classic");
+        ui.select_row("map");
         ui.key(MenuKey::Right);
         ui.key(MenuKey::Right);
-        // Bots: move to the bots row and step to 12.
-        ui.key(MenuKey::Down);
-        ui.key(MenuKey::Down);
+        ui.select_row("bots");
         for _ in 0..4 {
             ui.key(MenuKey::Right);
         }
-        // Bot combat: down, step to Off.
-        ui.key(MenuKey::Down);
+        ui.select_row("botcombat");
         ui.key(MenuKey::Right);
         assert_eq!(ui.s.selected_map(), Some("mp_pavlov"));
         assert_eq!(ui.s.bot_count(), 12);
@@ -470,12 +657,11 @@ mod tests {
         // Rebuild the menu (as the client does when a screen opens) and start:
         // the held settings must survive.
         ui.refresh();
-        for _ in 0..4 {
-            ui.key(MenuKey::Down);
-        }
+        ui.select_row("start");
         assert_eq!(
             ui.key(MenuKey::Activate),
             Some(Action::StartMatch {
+                playlist: "classic".into(),
                 map: "mp_pavlov".into(),
                 gametype: "dm".into(),
                 bots: 12,
@@ -488,10 +674,10 @@ mod tests {
     #[test]
     fn the_play_screen_remembers_its_settings() {
         let mut ui = Ui::new(Screen::Play);
-        ui.key(MenuKey::Right); // map -> harbor
-        ui.key(MenuKey::Right); // map -> pavlov
-        ui.key(MenuKey::Down);
-        ui.key(MenuKey::Down);
+        ui.select_row("map");
+        ui.key(MenuKey::Right); // map -> Harbor
+        ui.key(MenuKey::Right); // map -> Pavlov
+        ui.select_row("bots");
         ui.key(MenuKey::Right); // bots -> 9
         // Leave and come back.
         ui.s.close();
@@ -499,6 +685,64 @@ mod tests {
         ui.refresh();
         assert_eq!(ui.menu.value_of("map"), Some("Pavlov"));
         assert_eq!(ui.menu.value_of("bots"), Some("9"));
+    }
+
+    /// Switching the playlist re-pools the map list and cannot leave the
+    /// cursor on a map the new playlist does not offer.
+    #[test]
+    fn switching_playlist_re_pools_the_map_list() {
+        let mut ui = Ui::new(Screen::Play);
+        assert_eq!(ui.s.selected_playlist().id, "classic");
+        ui.select_row("playlist");
+        // Step left from Classic (the first) wraps to the last playlist.
+        ui.key(MenuKey::Left);
+        ui.refresh();
+        assert_eq!(ui.s.selected_playlist().id, "iw_classics");
+        // IW Classics has only the unverified Rust, so its pool is empty.
+        assert!(ui.s.playlist_maps().is_empty());
+        assert_eq!(ui.s.selected_map(), None);
+
+        // Community Classics: only the verified community map.
+        ui.s.playlist = 1;
+        ui.refresh();
+        assert_eq!(ui.s.selected_playlist().id, "community_classics");
+        assert_eq!(ui.s.selected_map(), Some("mp_stanjel"));
+        assert_eq!(ui.s.playlist_maps().len(), 1);
+
+        // Classic: stock only, three maps.
+        ui.s.playlist = 0;
+        ui.refresh();
+        assert_eq!(ui.s.selected_playlist().id, "classic");
+        assert_eq!(ui.s.playlist_maps().len(), 3);
+    }
+
+    /// A playlist with no verified maps disables the map row and START MATCH
+    /// cannot be reached with a map that does not exist.
+    #[test]
+    fn an_empty_playlist_disables_the_map_row() {
+        let mut s = screens();
+        s.open(Screen::Play);
+        s.playlist = 3; // iw_classics: Rust is unverified
+        let menu = s.menu().unwrap();
+        assert!(menu.rows.iter().any(|r| r.id == "map" && r.disabled));
+        assert_eq!(s.selected_map(), None);
+    }
+
+    /// The map info panel names the community author, so credit is visible in
+    /// the UI and not only in a readme.
+    #[test]
+    fn the_map_info_panel_credits_the_author() {
+        let mut s = screens();
+        s.playlist = 1; // community_classics
+        s.open(Screen::Play);
+        let menu = s.menu().unwrap();
+        let text: Vec<&str> = menu.rows.iter().map(|r| r.label.as_str()).collect();
+        assert!(
+            text.iter().any(|l| l.contains("Roger Abrahamsson")),
+            "author line missing: {text:?}"
+        );
+        assert!(text.iter().any(|l| l.contains("CoD1 Community")));
+        assert!(text.iter().any(|l| l.contains("MAP: STANJEL")));
     }
 
     /// Esc from a sub-screen goes back to the main menu, not straight out.
@@ -577,5 +821,27 @@ mod tests {
         let menu = s.menu().unwrap();
         assert!(menu.rows.iter().any(|r| r.id == "map" && r.disabled));
         assert_eq!(s.selected_map(), None);
+    }
+
+    /// Every playlist yields a first gametype that the gametype table knows,
+    /// so the Play screen can never show a mode with no id behind it.
+    #[test]
+    fn every_playlist_has_a_valid_gametype() {
+        for p in PLAYLISTS {
+            assert!(!gametype_id(p, 0).is_empty(), "{} has no first gametype", p.id);
+            assert!(
+                GAMETYPES.iter().any(|(id, _)| *id == gametype_id(p, 0)),
+                "{}: unknown first gametype",
+                p.id
+            );
+            assert_eq!(gametype_choices(p).len(), p.gametypes.len());
+        }
+    }
+
+    /// Every playlist id resolves, and the helper is total on a bad id.
+    #[test]
+    fn playlist_lookup_is_total() {
+        assert!(vcod_common::maplist::playlist_by_id("quick_play").is_some());
+        assert!(vcod_common::maplist::playlist_by_id("nope").is_none());
     }
 }
