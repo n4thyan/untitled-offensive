@@ -134,6 +134,10 @@ pub fn build_batches(
 
 /// Bounds over the drawn soups' vertices; the spawn fallback. Name rules
 /// only: callers here have no shader lib.
+///
+/// Uses referenced vertices only (not the declared vertex range) so that
+/// imported IW4 geometry — where many soups share a large vertex block —
+/// produces sane bounds.
 pub fn map_bounds(bsp: &Bsp) -> ([f32; 3], [f32; 3]) {
     let mut min = [f32::INFINITY; 3];
     let mut max = [f32::NEG_INFINITY; 3];
@@ -142,10 +146,19 @@ pub fn map_bounds(bsp: &Bsp) -> ([f32; 3], [f32; 3]) {
             continue;
         }
         let fv = soup.first_vertex as usize;
-        for v in &bsp.verts[fv..fv + soup.vertex_count as usize] {
-            for a in 0..3 {
-                min[a] = min[a].min(v.pos[a]);
-                max[a] = max[a].max(v.pos[a]);
+        let fi = soup.first_index as usize;
+        let ic = soup.index_count as usize;
+        if fi + ic > bsp.indices.len() {
+            continue;
+        }
+        for &local_idx in &bsp.indices[fi..fi + ic] {
+            let global = fv + local_idx as usize;
+            if global < bsp.verts.len() {
+                let v = &bsp.verts[global];
+                for a in 0..3 {
+                    min[a] = min[a].min(v.pos[a]);
+                    max[a] = max[a].max(v.pos[a]);
+                }
             }
         }
     }

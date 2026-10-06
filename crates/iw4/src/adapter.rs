@@ -335,13 +335,28 @@ pub fn build_bsp(
         mat.content_flags |= 0x1;
     }
 
-    // Compute real world bounds from actual vertices.
+    // Compute world bounds from REFERENCED vertices only.
+    // IW4's vertexCount describes a shared vertex block, not a per-soup range.
+    // Many soups share the same first_vertex/vertex_count but reference tiny
+    // disjoint subsets. Using the declared range produces enormous false AABBs.
     let mut world_mins = [f32::INFINITY; 3];
     let mut world_maxs = [f32::NEG_INFINITY; 3];
-    for v in &verts {
-        for a in 0..3 {
-            world_mins[a] = world_mins[a].min(v.pos[a]);
-            world_maxs[a] = world_maxs[a].max(v.pos[a]);
+    for soup in &soups {
+        let fv = soup.first_vertex as usize;
+        let fi = soup.first_index as usize;
+        let ic = soup.index_count as usize;
+        if fi + ic > indices.len() {
+            continue;
+        }
+        for &local_idx in &indices[fi..fi + ic] {
+            let global = fv + local_idx as usize;
+            if global < verts.len() {
+                let v = &verts[global];
+                for a in 0..3 {
+                    world_mins[a] = world_mins[a].min(v.pos[a]);
+                    world_maxs[a] = world_maxs[a].max(v.pos[a]);
+                }
+            }
         }
     }
     // Small epsilon to avoid degenerate bounds.
