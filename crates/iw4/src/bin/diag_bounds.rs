@@ -282,6 +282,8 @@ fn run(path: &str) {
         }
     };
 
+
+
     // Ranking A: top 10 by max absolute referenced coordinate
     let mut by_max_abs = soup_bounds.clone();
     by_max_abs.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap());
