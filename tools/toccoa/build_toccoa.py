@@ -257,6 +257,12 @@ def build(w, out_path):
                 out += struct.pack("<II", 0, contents)
             return out
         if index == 1:      # lightmaps: one all-black 512x512x3 page
+            # Every soup below names NO_LIGHTMAP (65535), so this page is never
+            # sampled: the client binds a white 1x1 instead and the surfaces
+            # stay fullbright. The lump still has to be exactly one page so the
+            # parser's `len % PAGE == 0` check passes. (An earlier comment here
+            # claimed a black lightmap "would multiply the texture to zero" --
+            # that is only true if a soup actually referenced page 0.)
             return b"\x00" * (512 * 512 * 3)
         if index == 2:      # planes
             return b"".join(struct.pack("<ffff", *p) for p in planes)

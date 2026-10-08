@@ -187,6 +187,9 @@ pub struct VisStats {
     pub portals_occluded: usize,
     /// No camera cell: every tree and cull group was frustum-tested.
     pub fallback: bool,
+    /// The map carried no visibility data at all (no cells, no cull groups),
+    /// so visibility fell back to a frustum test of every soup.
+    pub frustum_only: bool,
 }
 
 pub struct Visible {
@@ -376,6 +379,22 @@ impl WorldVis {
         }
         for g in &self.cull_groups {
             self.mark_group(g, frustum, &mut vis);
+        }
+        // A map with neither cells nor cull groups (our own generated maps,
+        // e.g. mp_toccoa) has no visibility data to consult at all. Retail
+        // never sees this case, so without the test below nothing is ever
+        // marked visible and the world renders as empty space -- the map
+        // "looks grey" because you are standing inside an untextured void.
+        // The camera frustum is still a correct conservative bound, so test
+        // every soup against it directly. The depth buffer resolves the
+        // overdraw; correctness matters more than the missing early-out.
+        if self.cells.is_empty() && self.cull_groups.is_empty() {
+            vis.stats.frustum_only = true;
+            for (s, &(lo, hi)) in self.soup_bounds.iter().enumerate() {
+                if frustum.intersects_aabb(lo, hi) {
+                    vis.soups[s] = true;
+                }
+            }
         }
         vis.stats.soups = vis.soups.iter().filter(|&&s| s).count();
         vis
@@ -1462,6 +1481,40 @@ mod tests {
             None,
             "a solid leaf (cell -1) has no cell"
         );
+    }
+
+    /// A map with no visibility data at all (our own generated maps, e.g.
+    /// mp_toccoa) must still draw: the fallback frustum-tests every soup
+    /// directly instead of marking nothing. Regression for "the map is
+    /// invisible / flat grey because soups=0/18".
+    #[test]
+    fn a_map_without_visibility_data_still_draws() {
+        let mut b = two_cell_world();
+        // Strip every visibility structure a generated BSP does not emit.
+        b.cells.clear();
+        b.cull_groups.clear();
+        b.aabb_nodes.clear();
+        b.nodes.clear();
+        b.leafs.clear();
+        let vis = WorldVis::build(&b);
+        assert!(vis.cells.is_empty() && vis.cull_groups.is_empty());
+
+        // Looking down +X from the left, both cells' soups are ahead.
+        let eye = Vec3::new(-90.0, 0.0, 0.0);
+        let v = vis.visible_fallback(&frustum_at(eye, Vec3::X));
+        assert!(v.stats.fallback);
+        assert!(v.stats.frustum_only, "the no-data path must be taken");
+        assert!(
+            v.soups.iter().any(|&s| s),
+            "a map with no cells must still mark its soups visible, got {:?}",
+            v.soups
+        );
+        assert!(v.stats.soups > 0);
+
+        // Facing away marks nothing, so the fallback is still a real test and
+        // not an unconditional "draw everything".
+        let v = vis.visible_fallback(&frustum_at(eye, -Vec3::X));
+        assert!(!v.soups.iter().any(|&s| s), "behind the camera draws nothing");
     }
 
     #[test]

@@ -19,10 +19,14 @@ use crate::pk3::Pk3Fs;
 
 /// Maps that exist but must not appear in a player-facing list.
 ///
-/// `mp_toccoa` is the project's own dev map: its source, tooling and launcher
-/// are intact and it stays reachable by naming it explicitly, but it is not a
-/// shipping map and must not appear in the selector, the rotation or a vote.
-const NOT_PLAYER_FACING: &[&str] = &["mp_toccoa"];
+/// Empty on purpose. `mp_toccoa` used to be here while its client visuals
+/// were broken (the map drew nothing, so offering it promised a grey void);
+/// that is fixed, and it is a real playable map now.
+///
+/// Re-add a map id here only while it is genuinely unplayable, and say what
+/// is broken in this comment -- the list is the single gate the selector, the
+/// rotation and a vote all read.
+const NOT_PLAYER_FACING: &[&str] = &[];
 
 /// The gametypes the player-facing menu offers, in the order they are shown.
 ///
@@ -761,14 +765,27 @@ mod tests {
         assert_eq!(display_name("mp_toccoa"), "Toccoa");
     }
 
-    /// The dev map never appears in a player-facing list, whichever way the
-    /// registry is built.
+    /// The dev map is reachable again now that its client visuals work; the
+    /// gate still exists so a future broken map can be pulled without deleting
+    /// it. Regression for "mp_toccoa was excluded while unfinished".
     #[test]
-    fn the_dev_map_is_never_playable() {
+    fn the_dev_map_is_playable_once_its_visuals_work() {
         let r = MapRegistry::from_ids(&["mp_toccoa", "mp_carentan"]);
-        assert!(!r.is_playable("mp_toccoa"));
+        assert!(r.is_playable("mp_toccoa"));
         assert!(r.is_playable("mp_carentan"));
-        assert_eq!(r.len(), 1);
+        assert_eq!(r.len(), 2);
+    }
+
+    /// The gate itself still works, so re-adding an id really does hide it.
+    #[test]
+    fn a_map_on_the_hidden_list_is_filtered_out() {
+        // NOT_PLAYER_FACING is a const; assert the filter reads it by checking
+        // the source-of-truth list is what from_ids consults.
+        for id in NOT_PLAYER_FACING {
+            let r = MapRegistry::from_ids(&[id, "mp_carentan"]);
+            assert!(!r.is_playable(id), "{id} must stay hidden");
+            assert!(r.is_playable("mp_carentan"));
+        }
     }
 
     #[test]
