@@ -21,6 +21,8 @@ struct Capture {
     image_formats: HashMap<String, (u32, u16, u16)>,
     mat_names: Vec<String>,
     image_names: Vec<String>,
+    /// Which texture-def offset produced a valid image name (8 = x86, 16 = x64).
+    texdef_off: usize,
 }
 
 fn key(p: Ptr) -> (u8, u32) {
@@ -42,14 +44,24 @@ impl Capture {
 
         // First texture slot's image name.
         if let Some(arr) = m.textures {
-            if let Ok(ZonePtr::Offset(img_slot)) = s.ptr_at(arr, 8) {
-                let body = s.resolve_alias(img_slot);
-                if let Ok(ZonePtr::Offset(n)) = s.ptr_at(body, s.layout(28, 32)) {
-                    if let Ok(img_name) = s.cstr(s.resolve_alias(n)) {
-                        self.first_image
-                            .insert(name.clone(), img_name.to_string());
+            let mut found = None;
+            // The texture def is x86 (12B) / x64 (16B): name ptr then image ptr.
+            for off in [s.pointer_bytes(), 8usize] {
+                if let Ok(ZonePtr::Offset(img_slot)) = s.ptr_at(arr, off) {
+                    let body = s.resolve_alias(img_slot);
+                    if let Ok(ZonePtr::Offset(n)) = s.ptr_at(body, s.layout(28, 32)) {
+                        if let Ok(nm) = s.cstr(s.resolve_alias(n)) {
+                            if nm.chars().all(|c| c.is_ascii_graphic()) && nm.len() > 2 {
+                                found = Some((off, nm.to_string()));
+                                break;
+                            }
+                        }
                     }
                 }
+            }
+            if let Some((off, nm)) = found {
+                self.texdef_off = off;
+                self.first_image.insert(name.clone(), nm);
             }
         }
     }
@@ -150,6 +162,67 @@ fn run(path: &str) {
         "materials with a first-image name: {}",
         capture.first_image.len()
     );
+    println!("texture-def image offset that worked: {}", capture.texdef_off);
+
+    // BRUTE FORCE: for the first named material, find which struct offsets hold
+    // pointers that lead to printable strings (name at +0) or to an Image
+    // (name at +32). This locates the texture array and image ptr directly.
+    println!("\n--- material struct pointer sweep (first material) ---");
+    if let Some((body, mname)) = capture
+        .mat_by_body
+        .iter()
+        .min_by_key(|(k, _)| (k.0, k.1))
+        .map(|(k, n)| {
+            (
+                Ptr {
+                    block: k.0,
+                    offset: k.1,
+                },
+                n.clone(),
+            )
+        })
+    {
+        println!("  material {mname} @block{}off{}", body.block, body.offset);
+        let words: Vec<u32> = (0..160 / 4)
+            .map(|w| stream.u32_at(body, w * 4).unwrap_or(0))
+            .collect();
+        println!("  raw u32[0..40]: {words:?}");
+        for off in (0..128).step_by(8) {
+            let Ok(zp) = stream.ptr_at(body, off) else {
+                continue;
+            };
+            let ZonePtr::Offset(p) = zp else { continue };
+            let p = stream.resolve_alias(p);
+            let name0 = stream
+                .ptr_at(p, 0)
+                .ok()
+                .and_then(|z| match z {
+                    ZonePtr::Offset(np) => stream
+                        .cstr(stream.resolve_alias(np))
+                        .ok()
+                        .map(|c| c.to_string()),
+                    _ => None,
+                })
+                .filter(|c| c.len() > 2 && c.chars().all(|ch| ch.is_ascii_graphic()));
+            let name32 = stream
+                .ptr_at(p, 32)
+                .ok()
+                .and_then(|z| match z {
+                    ZonePtr::Offset(np) => stream
+                        .cstr(stream.resolve_alias(np))
+                        .ok()
+                        .map(|c| c.to_string()),
+                    _ => None,
+                })
+                .filter(|c| c.len() > 2 && c.chars().all(|ch| ch.is_ascii_graphic()));
+            if name0.is_some() || name32.is_some() {
+                println!(
+                    "  +{off:3} -> block{}off{}  name@0={:?}  name@32={:?}",
+                    p.block, p.offset, name0, name32
+                );
+            }
+        }
+    }
 
     let gfx = capture.gfx_world.as_ref().expect("gfx world");
     let stride = stream.layout(24, 32);

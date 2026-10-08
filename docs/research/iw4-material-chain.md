@@ -84,7 +84,73 @@ within whatever the true record is; the material pointer is at 16 only
   and image loads are invisible (the nested loader calls `links.loaded`, not
   `sink.load_asset`).
 
+## Second blocker: the Material struct layout is ALSO wrong for X64
+
+Raw `u32` dump of the first material (`faction_128_arab`) at its loaded body
+`block0off0` (x64, 8-byte pointers):
+
+```
+[0]=807459384 [1]=0 [2]=0 [3]=0 [4]=837974602 [5]=0 [6]=0 [7]=0
+[8]=4294967295 [9]=4294967295 [10]=837974569 [11..39]=0
+```
+
+Reading:
+- `+0` is the name pointer (it decodes to `faction_128_arab`), so the loader's
+  `follow_name(p, 0)` is right.
+- The only other plausible pointers are at `+16` and `+40` (both decode to
+  block 1, ~301 MB apart in offset).
+- `+32`/`+36` hold `0xFFFFFFFF, 0xFFFFFFFF` — a `-1` sentinel pair, not data.
+- Everything from `+44` to `+160` is **zero**.
+
+The loader allocates `s.layout(sz::MATERIAL, 120)` = **120 bytes** and reads
+`texture_count` at `s.layout(72, 80)` = **80**, `technique_set` at 88,
+`textures` at 96. Those offsets are all past the end of the real record, which
+looks like a **~48-byte header**. So `texture_count` reads 0 (or garbage 255
+when the "material" is actually a misread surface word), and the texture array
+is never found. That is why 0 of 282 materials yield an image name.
+
+This is independent of the GfxSurface blocker and must be fixed too: the
+`Material` layout in `crates/iw4/src/load/material.rs` and
+`asset_iw4::size::MATERIAL` were tuned against the x86 variant and do not
+describe the X64 record.
+
 ## Next step (tomorrow, in order)
+
+Fix the **Material** layout first — it is the cheaper of the two and everything
+downstream depends on it.
+
+1. **Determine the true x64 Material record.** From the dump the header is
+   ~48 bytes: `+0` name, `+16` and `+40` pointers, `-1` sentinel at `+32`.
+   Find which of `+16`/`+40` is the technique_set and which leads to the
+   texture array, by following each and looking for a printable name (the
+   current sweep found neither at `+0` or `+32` of the target, so the
+   texture-def/image layout needs the same treatment as the surface).
+2. Only then re-attempt the GfxSurface material pointer — with a known-good
+   material body to match against, the surface field becomes findable by
+   "does this word point at a real material record", which is a far stronger
+   test than "does this word point at a printable string".
+3. Render one: write the real `.iwi` DDS into an overlay pk3 as
+   `images/<name>.dds` — the client's `load_material_image` already probes
+   `.dds`, so one texture lights up with **no renderer change at all**. This is
+   the smallest possible vertical slice and it deliberately reuses the whole
+   existing CoD1 material path.
+
+### Proven-good pieces to reuse (do not redo)
+
+- **IWI → DDS is trivial and verified.** An `.iwi` is a 32-byte header
+  (`IWi`, ver 8, then flags/usage/format at +4/+6/+8, `u16` w/h/d at +10/12/14,
+  `u32[4]` per-picmip sizes at +16) followed by a **standard DXT mip chain**.
+  Measured: `ch_metal_rusty_01_col` (fmt 11 = DXT1) 512x512, 32 + 174776 =
+  174808 = file size exactly; `ch_factory_ruststain1` (fmt 13 = DXT5) 512x512,
+  32 + 349552 = 349584 exactly. Decoded with a 128-byte DDS header in front,
+  the payload scores mean adjacent `|dRGB|` of 6–9 versus 32–51 for a
+  deliberately wrong offset — i.e. it is a real texture, not noise.
+  Helper scripts: `%LOCALAPPDATA%/hermes/cache/scratch/iwi_probe.py` (decode to
+  PNG) and `iwi_score.py` (coherence score vs wrong-offset control).
+- `.iwi` files live in `main/*.iwd`, which are plain zips; `Pk3Fs` can index
+  them, and it normalises `@` → `_` (exactly what MW2 image names need).
+
+### The GfxSurface side (blocked, secondary)
 
 1. **Find the true GfxSurface stride on X64.** The stride scan already run
    (candidate strides 20/24/28/32/36/40/44 crossed with material-pointer
