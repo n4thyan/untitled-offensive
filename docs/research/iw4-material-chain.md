@@ -149,6 +149,11 @@ downstream depends on it.
   PNG) and `iwi_score.py` (coherence score vs wrong-offset control).
 - `.iwi` files live in `main/*.iwd`, which are plain zips; `Pk3Fs` can index
   them, and it normalises `@` → `_` (exactly what MW2 image names need).
+- **`tools/iwi_to_dds.py` already implements the conversion.** Verified: it
+  emits a 128-byte DDS header (`DDS ` magic, flags `0x81007`, `mipMapCount` at
+  offset 28, DXT1/DXT5 fourcc at 84) followed by the raw mip chain, which is
+  exactly what `vcod_common::assets::parse_dds` reads. Usage:
+  `python tools/iwi_to_dds.py in.iwi out.dds` or `--batch <dir> <out-dir>`.
 
 ### The GfxSurface side (blocked, secondary)
 
