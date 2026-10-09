@@ -70,6 +70,8 @@ const MAX_PACKET_USERCMDS: u8 = 32;
 const MAX_PENDING_CMDS: usize = 64;
 /// pmove steps per snapshot tick; a flood beyond this fast-forwards.
 const MAX_CMDS_PER_TICK: usize = 32;
+/// Signal well above any normal client rate. It does not drop or ban.
+const PACKET_FLOOD_SIGNAL: u16 = 64;
 /// `SV_ClientCommand`'s flood window (`cod_lnxded` 0x8086f5f, `add eax,0x320`):
 /// a non-exempt client command opens 800 ms during which every further
 /// non-exempt one from an active client is dropped before the game sees it
@@ -84,6 +86,16 @@ pub(crate) const FRAME_MS: i32 = 50;
 /// (clientState entries; `ps.clientNum` gets 8), so more than 64 would
 /// collide silently.
 pub const MAX_CLIENTS: usize = 64;
+
+fn strike_client(c: &mut Client, slot: usize, reason: crate::validation::Reason) {
+    if c.discipline.strike(reason) {
+        log::warn!(
+            "client {slot} {:?}: authoritative input strike {}: {reason}",
+            c.name,
+            c.discipline.strikes()
+        );
+    }
+}
 
 pub struct ServerConfig {
     pub map: String,
@@ -1565,6 +1577,8 @@ impl Server {
                 "client {slot}: messageAcknowledge {} out of range",
                 m.message_ack
             );
+            let c = self.clients[slot].as_mut().unwrap();
+            strike_client(c, slot, crate::validation::Reason::MalformedPacket);
             return;
         }
         // 0x808ca1a drops an ack too far behind. One ahead of what we sent is
@@ -1579,6 +1593,8 @@ impl Server {
                 "client {slot}: reliableAcknowledge {} out of range",
                 m.reliable_ack
             );
+            let c = self.clients[slot].as_mut().unwrap();
+            strike_client(c, slot, crate::validation::Reason::MalformedPacket);
             return;
         }
 
@@ -1606,6 +1622,8 @@ impl Server {
         let base = c.last_cmd;
         let Some((ops, last_cmd)) = self.parse_client_ops(c, &m, base) else {
             log::debug!("client {slot}: message from {from} does not decode");
+            let c = self.clients[slot].as_mut().unwrap();
+            strike_client(c, slot, crate::validation::Reason::MalformedPacket);
             return;
         };
         // The new delta base commits before any op runs; a message that fails
@@ -1613,6 +1631,10 @@ impl Server {
         self.clients[slot].as_mut().unwrap().last_cmd = last_cmd;
         let c = self.clients[slot].as_mut().unwrap();
         c.accept(&m, now);
+        c.packets_this_tick = c.packets_this_tick.saturating_add(1);
+        if c.packets_this_tick == PACKET_FLOOD_SIGNAL + 1 {
+            strike_client(c, slot, crate::validation::Reason::PacketFlood);
+        }
         c.addr = from; // NAT may move the port; the qport is the identity
         self.packet_seq += 1;
         for op in ops {
@@ -1795,10 +1817,23 @@ impl Server {
                     // "-" clears the slot, so a value is never a bare dash
                     // trying to be both.
                     self.classes.set_slot(&name, class_slot, "");
+                } else if matches!(
+                    class_slot,
+                    ClassSlot::Primary | ClassSlot::Secondary | ClassSlot::Equipment
+                ) && !crate::configstrings::weapon_index(value)
+                    .is_some_and(|i| self.weapon_table.get(i).is_some())
+                {
+                    log::warn!("classes: {name:?} rejected unknown weapon {value:?}");
+                    if let Some(c) = self.clients[slot].as_mut() {
+                        strike_client(c, slot, crate::validation::Reason::InvalidLoadout);
+                    }
                 } else if self.classes.set_slot(&name, class_slot, value) {
                     log::info!("classes: {name:?} {slot_name} = {value}");
                 } else {
                     log::warn!("classes: {name:?} rejected {slot_name} = {value:?}");
+                    if let Some(c) = self.clients[slot].as_mut() {
+                        strike_client(c, slot, crate::validation::Reason::InvalidLoadout);
+                    }
                 }
             }
             // `selectclass <index>`: the class picker's answer. The choice is
@@ -1812,6 +1847,9 @@ impl Server {
             "selectclass" => {
                 let Some(index) = args.trim().parse::<usize>().ok() else {
                     log::debug!("client {slot}: selectclass needs an index");
+                    if let Some(c) = self.clients[slot].as_mut() {
+                        strike_client(c, slot, crate::validation::Reason::InvalidClass);
+                    }
                     return true;
                 };
                 let Some(name) = self.clients[slot].as_ref().map(|c| c.name.clone()) else {
@@ -1831,6 +1869,9 @@ impl Server {
                     log::info!("classes: {name:?} queued class {index} for the next spawn");
                 } else {
                     log::warn!("classes: {name:?} selectclass {index} is out of range");
+                    if let Some(c) = self.clients[slot].as_mut() {
+                        strike_client(c, slot, crate::validation::Reason::InvalidClass);
+                    }
                 }
             }
             // Writes the client's profile to the classes dir, so an edit
@@ -1863,6 +1904,20 @@ impl Server {
             "kill" => {
                 let packet = self.packet_seq;
                 if let Some(c) = self.clients[slot].as_mut() {
+                    let playing = c.state == ClientState::Active
+                        && c.sim.as_ref().is_some_and(|s| {
+                            s.pm_type == crate::spectate::PmType::Normal && !s.dead && s.health > 0
+                        });
+                    if !playing {
+                        strike_client(
+                            c,
+                            slot,
+                            crate::validation::Reason::ActionOutsidePlayingState,
+                        );
+                        c.last_client_command = seq;
+                        c.netchan.last_client_command_string = s;
+                        return true;
+                    }
                     c.kill_at.get_or_insert(packet);
                 }
             }
@@ -1895,6 +1950,20 @@ impl Server {
         let Some(c) = self.clients[slot].as_mut() else {
             return;
         };
+        let strikes = c.discipline.strikes();
+        let cmds = c.discipline.validate_usercmd_block(cmds);
+        if c.discipline.strikes() != strikes
+            && c
+                .discipline
+                .should_log(crate::validation::Reason::UsercmdPastBlockEnd)
+        {
+            log::warn!(
+                "client {slot} {:?}: authoritative input strike {}: {}",
+                c.name,
+                c.discipline.strikes(),
+                crate::validation::Reason::UsercmdPastBlockEnd
+            );
+        }
         // The first usercmd after a gamestate is what puts a client in the
         // world; `begin` is not a CoD client command. docs/protocol-1.1.md,
         // "Entering the world".
@@ -1909,6 +1978,9 @@ impl Server {
         c.pending
             .extend(cmds.into_iter().map(|cmd| QueuedCmd { packet, cmd }));
         let excess = c.pending.len().saturating_sub(MAX_PENDING_CMDS);
+        if excess != 0 {
+            strike_client(c, slot, crate::validation::Reason::UsercmdFlood);
+        }
         c.pending.drain(..excess);
     }
 
@@ -4632,6 +4704,9 @@ impl Server {
 
         // Every entity built once, then culled and written per client.
         self.send_snapshots(&moved, wall_ms);
+        for c in self.clients.iter_mut().flatten() {
+            c.packets_this_tick = 0;
+        }
         // The weapon changes are already drained when a script is loaded,
         // and a server without one has nothing to write them to.
         self.weapon_changes.clear();
@@ -4660,6 +4735,11 @@ impl Server {
         let now_ms = self.sv_time_ms;
         let max_clients = self.clients.len();
         let mut moved = vec![MoveSummary::default(); max_clients];
+        let accepted_clocks: Vec<i32> = self
+            .clients
+            .iter()
+            .map(|c| c.as_ref().map_or(0, |c| c.last_processed_st))
+            .collect();
         let mut rounds: Vec<Round> = (0..max_clients).map(|_| Round::default()).collect();
         // A client past the per-tick cap keeps the rest for the next tick.
         let mut capped = vec![false; max_clients];
@@ -4734,7 +4814,25 @@ impl Server {
                 capped[slot] = true;
                 continue;
             }
-            let cmd = c.pending.remove(0).cmd;
+            let mut cmd = c.pending.remove(0).cmd;
+            let sim = c.sim.as_ref().unwrap();
+            let context = crate::validation::CommandContext {
+                level_time_ms: now_ms,
+                accepted_clock_ms: accepted_clocks[slot],
+                current_weapon: sim.ps.weapon,
+                weapons_held: sim.ps.weapons_held,
+                weapon_count: weapons.defs().len(),
+            };
+            let reasons = c.discipline.validate_usercmd(&mut cmd, context);
+            for reason in reasons {
+                if c.discipline.should_log(reason) {
+                    log::warn!(
+                        "client {slot} {:?}: authoritative input strike {}: {reason}",
+                        c.name,
+                        c.discipline.strikes()
+                    );
+                }
+            }
             // Stale cmds (dt <= 0) are skipped whole; a long one is chopped
             // rather than clamped away.
             let dt_ms = cmd.server_time.wrapping_sub(c.last_processed_st);

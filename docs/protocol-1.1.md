@@ -1004,12 +1004,15 @@ goes out as `commandTime` -- at the cmd's own clock.
 the single clamped step it used to take covered 16. The `PMF_JUMP_HELD`
 `upmove` force of 20 is not modelled; vcod's held-jump latch survives a chop
 without it, and only the later steps' air wish differs
-(`docs/research/cod11-mantle.md`, "Jumps"). The two `level.time` clamps are not implemented either: they are a
-speed-cheat guard rather than part of the dt rule, and vcod seeds a client's
+(`docs/research/cod11-mantle.md`, "Jumps"). The upper `level.time + 200` bound
+is enforced by the server's authoritative input discipline. Because vcod seeds
 `commandTime` from the entering cmd's own clock (`enter_world`) where retail
-leaves it at whatever `ClientSpawn` wrote, so a window measured against
-`sv_time` would strand a client whose handshake stamped that cmd ahead of the
-server.
+leaves it at whatever `ClientSpawn` wrote, the fixed bound for one replay pass
+uses the greater of `level.time` and the client's command clock at tick entry.
+That preserves an already-established connect-time lead without letting every
+cmd in one burst compound it. The lower `level.time - 1000` local clamp remains
+unimplemented: stale cmds are skipped and pmove's separately verified 1000 ms
+arrears bound already limits integration. See `docs/server-tick-authority.md`.
 
 The vcod client predicts on the same rule. Each frame it rebuilds the sim
 playerstate from the newest snapshot and replays every cmd it sent with a

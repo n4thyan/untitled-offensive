@@ -78,6 +78,10 @@ pub struct Client {
     /// Frames sent to this client, indexed message_num % SV_PACKET_BACKUP;
     /// the delta base for a later frame is picked from here by message_ack.
     pub frames: Vec<Option<Snapshot>>,
+    /// Bounded, observational authoritative-input signals. This never bans.
+    pub discipline: crate::validation::Discipline,
+    /// Accepted connected packets since the previous tick, for a signal only.
+    pub packets_this_tick: u16,
 }
 
 impl Client {
@@ -111,6 +115,8 @@ impl Client {
             sim: None,
             is_bot: false,
             frames: vec![None; SV_PACKET_BACKUP],
+            discipline: crate::validation::Discipline::default(),
+            packets_this_tick: 0,
         }
     }
 

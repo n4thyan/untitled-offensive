@@ -15,6 +15,7 @@ pub mod items;
 pub mod map_loader;
 pub mod server;
 pub mod spectate;
+pub mod validation;
 pub mod weapons;
 pub mod world;
 
