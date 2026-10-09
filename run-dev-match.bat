@@ -1,121 +1,85 @@
 @echo off
-REM ============================================================================
-REM  UNTITLED - development match launcher
-REM
-REM  Starts a dedicated CoD1 server with bots on your retail install and, after
-REM  a short warm-up, launches the client connected to it.
-REM
-REM  The retail Call of Duty install is only ever READ. Nothing is copied into
-REM  it, nothing is written to it, and no extracted asset is kept inside this
-REM  repository.
-REM
-REM  Usage:
-REM    run-dev-match.bat [MAP] [GAMETYPE] [BOTCOUNT]
-REM      MAP        a retail map (mp_carentan) or our own (mp_toccoa)
-REM                  defaults to mp_toccoa
-REM      GAMETYPE   dm or tdm      defaults to dm
-REM      BOTCOUNT   defaults to 3
-REM
-REM  Examples:
-REM    run-dev-match.bat                        REM mp_toccoa, dm, 3 bots
-REM    run-dev-match.bat mp_toccoa tdm 4
-REM    run-dev-match.bat mp_carentan dm 3
-REM ============================================================================
+REM UNTITLED local friends-alpha match: [MAP] [GAMETYPE] [BOTCOUNT]
+REM Starts the project server and client without writing to the retail install.
+setlocal EnableExtensions
 
-setlocal
-
-set "GAME_DIR=C:\Program Files (x86)\Call of Duty"
-
-REM Where this script lives; logs go next to the binaries.
 set "ROOT=%~dp0"
-set "BIN=%ROOT%target\release"
 set "LOGS=%ROOT%dev-logs"
-REM Our own content, searched BEFORE the retail main/ so custom maps resolve
-REM without the install being modified or duplicated into this repository.
+set "CLASSES=%ROOT%assets\classes"
 set "OVERLAY=%ROOT%main-untitled"
 
-set "MAP=%~1"
-if "%MAP%"=="" set "MAP=mp_toccoa"
+REM A packaged build keeps the executables beside this script. A source checkout
+REM keeps them under target\release and can build them when absent.
+if exist "%ROOT%vcod.exe" (
+  set "BIN=%ROOT%"
+) else (
+  set "BIN=%ROOT%target\release\"
+)
 
+REM --game-dir wins in the binaries. This launcher honours COD_DIR first, then
+REM checks common Windows retail/Steam locations. It never modifies them.
+set "GAME_DIR=%COD_DIR%"
+if not defined GAME_DIR if exist "C:\Program Files (x86)\Call of Duty\main\pak0.pk3" set "GAME_DIR=C:\Program Files (x86)\Call of Duty"
+if not defined GAME_DIR if exist "C:\Program Files (x86)\Steam\steamapps\common\Call of Duty\main\pak0.pk3" set "GAME_DIR=C:\Program Files (x86)\Steam\steamapps\common\Call of Duty"
+if not defined GAME_DIR if exist "C:\Program Files\Steam\steamapps\common\Call of Duty\main\pak0.pk3" set "GAME_DIR=C:\Program Files\Steam\steamapps\common\Call of Duty"
+if not defined GAME_DIR if exist "D:\Steam\steamapps\common\Call of Duty\main\pak0.pk3" set "GAME_DIR=D:\Steam\steamapps\common\Call of Duty"
+
+set "MAP=%~1"
+if "%MAP%"=="" set "MAP=mp_carentan"
 set "GAMETYPE=%~2"
 if "%GAMETYPE%"=="" set "GAMETYPE=dm"
-
 set "BOTS=%~3"
 if "%BOTS%"=="" set "BOTS=3"
 
-if not exist "%LOGS%" mkdir "%LOGS%"
-
-if not exist "%BIN%\vcod-server.exe" (
-  echo Building release binaries...
-  cargo build --release
-  if errorlevel 1 (
-    echo BUILD FAILED
-    exit /b 1
-  )
+if not defined GAME_DIR (
+  echo ERROR: Call of Duty was not found.
+  echo Set COD_DIR to the folder containing main\pak0.pk3 and retry.
+  exit /b 1
 )
-
-REM --- custom map: build it from source ----------------------------------------
-REM mp_toccoa is generated (layout.py -> BSP -> pk3), so no built binary needs
-REM committing and the map is reproducible from source. Spawn validation runs
-REM first: a spawn buried in geometry is a layout bug that otherwise only
-REM shows up as a bot standing still for four minutes.
-if /i "%MAP%"=="mp_toccoa" (
-  echo Building custom map %MAP% ...
-  pushd "%ROOT%tools\toccoa"
-  python validate_spawns.py
-  if errorlevel 1 (
-    popd
-    echo SPAWN VALIDATION FAILED - fix layout.py before playing.
-    exit /b 1
-  )
-  python build_toccoa.py
-  if errorlevel 1 ( popd & echo MAP BUILD FAILED & exit /b 1 )
-  python package_pk3.py
-  if errorlevel 1 ( popd & echo MAP PACKAGE FAILED & exit /b 1 )
-  popd
-)
-
 if not exist "%GAME_DIR%\main\pak0.pk3" (
-  echo ERROR: Call of Duty install not found at "%GAME_DIR%".
-  echo Edit GAME_DIR at the top of this script and retry.
+  echo ERROR: "%GAME_DIR%" does not contain main\pak0.pk3.
   exit /b 1
 )
 
+if not exist "%BIN%vcod-server.exe" (
+  echo Building release binaries...
+  pushd "%ROOT%"
+  cargo build --release -p vcod -p vcod-server
+  set "BUILD_ERROR=%ERRORLEVEL%"
+  popd
+  if not "%BUILD_ERROR%"=="0" exit /b %BUILD_ERROR%
+)
+if not exist "%BIN%vcod.exe" (
+  echo ERROR: missing "%BIN%vcod.exe".
+  exit /b 1
+)
+
+REM The source-only Toccoa map may be rebuilt when its tools are present. It is
+REM not part of the friends-alpha package.
+if /i "%MAP%"=="mp_toccoa" if exist "%ROOT%tools\toccoa\build_toccoa.py" (
+  pushd "%ROOT%tools\toccoa"
+  python validate_spawns.py && python build_toccoa.py && python package_pk3.py
+  set "MAP_ERROR=%ERRORLEVEL%"
+  popd
+  if not "%MAP_ERROR%"=="0" exit /b %MAP_ERROR%
+)
+
+if not exist "%LOGS%" mkdir "%LOGS%"
+set "OVERLAY_ARG="
+if exist "%OVERLAY%" set "OVERLAY_ARG=--overlay-dir "%OVERLAY%""
+
 echo.
-echo   UNTITLED dev match
-echo   ------------------
-echo   map      : %MAP%
-echo   gametype : %GAMETYPE%
-echo   bots     : %BOTS%
-echo   game dir : %GAME_DIR%
-echo   overlay  : %OVERLAY%
-echo   logs     : %LOGS%
+echo UNTITLED friends-alpha local match
+echo map=%MAP%  gametype=%GAMETYPE%  bots=%BOTS%
+echo retail=%GAME_DIR%
+echo logs=%LOGS%
 echo.
 
-REM --- dedicated server -------------------------------------------------------
-echo Starting dedicated server on udp/28960 ...
-start "UNTITLED server" cmd /k ""%BIN%\vcod-server.exe" --game-dir "%GAME_DIR%" --overlay-dir "%OVERLAY%" --gametype %GAMETYPE% --bots %BOTS% --bots-shoot --port 28960 --classes-dir "%ROOT%assets\classes" %MAP% > "%LOGS%\server.log" 2>&1"
-
-REM The server needs to load the map, parse the gametype script and run the
-REM bots through the join menus before a client can see a live match. 12s is
-REM comfortably more than that on a normal boot; the client's own connect is
-REM retried anyway if the server is not listening yet.
-echo Waiting for the server to come up...
+start "UNTITLED server" cmd /k ""%BIN%vcod-server.exe" --game-dir "%GAME_DIR%" %OVERLAY_ARG% --gametype %GAMETYPE% --bots %BOTS% --bots-shoot --port 28960 --classes-dir "%CLASSES%" %MAP% ^> "%LOGS%\server.log" 2^>^&1"
+echo Waiting for the server...
 timeout /t 12 /nobreak >nul
+start "UNTITLED client" cmd /c ""%BIN%vcod.exe" --game-dir "%GAME_DIR%" %OVERLAY_ARG% --connect 127.0.0.1:28960 --team allies --weapon m1carbine_mp ^> "%LOGS%\client.log" 2^>^&1"
 
-REM --- client -----------------------------------------------------------------
-echo Launching client, joining as allies with the M1 Carbine ...
-start "UNTITLED client" "%BIN%\vcod.exe" --game-dir "%GAME_DIR%" --overlay-dir "%OVERLAY%" --connect 127.0.0.1:28960 --team allies --weapon m1carbine_mp > "%LOGS%\client.log" 2>&1"
-
-echo.
-echo Client launched.
-echo   click the game window to capture the mouse, Esc to release it
-echo   WASD move . Space jump . C crouch . Ctrl prone . Q/E lean . Shift sprint
-echo   V melee . G/4/wheel grenade . LMB fire . RMB aim . R reload . 1-4 weapons . F3 debug overlay
-echo.
-echo Server log : %LOGS%\server.log
-echo Client log : %LOGS%\client.log
-echo.
-echo Close the server window, or run stop-dev-match.bat, to shut it down.
-
+echo Client launched. Press M for the multiplayer menu.
+echo Use stop-dev-match.bat to stop both project processes.
 endlocal
