@@ -193,6 +193,39 @@ impl Menu {
         let value = value.min(choices.len().saturating_sub(1));
         row.kind = RowKind::Selector { choices, value };
     }
+
+    /// The centre of a rendered row, for pointer positioning and tests.
+    #[cfg(test)]
+    pub fn row_center(&self, index: usize, screen_w: f32, screen_h: f32) -> Option<(f32, f32)> {
+        self.rows.get(index)?;
+        let g = geometry(self.rows.len(), screen_w, screen_h);
+        Some((
+            g.x + g.w / 2.0,
+            g.y + (ROWS_TOP + g.row_gap * index as f32 + g.row_h / 2.0) * g.ps,
+        ))
+    }
+
+    /// The selectable row under a window-space pointer. Row hitboxes match the
+    /// rendered panel and leave the visual gap between rows inactive.
+    pub fn hit_test(&self, x: f32, y: f32, screen_w: f32, screen_h: f32) -> Option<usize> {
+        let g = geometry(self.rows.len(), screen_w, screen_h);
+        if x < g.x || x >= g.x + g.w {
+            return None;
+        }
+        self.rows.iter().enumerate().find_map(|(index, row)| {
+            let top = g.y + (ROWS_TOP + g.row_gap * index as f32) * g.ps;
+            (row.selectable() && y >= top && y < top + g.row_h * g.ps).then_some(index)
+        })
+    }
+
+    /// Move selection to the selectable row under the pointer.
+    pub fn hover(&mut self, x: f32, y: f32, screen_w: f32, screen_h: f32) -> bool {
+        let Some(index) = self.hit_test(x, y, screen_w, screen_h) else {
+            return false;
+        };
+        self.selected = index;
+        true
+    }
 }
 
 /// Panel geometry, in the 480-line reference space the other screens use.
@@ -202,8 +235,46 @@ const REF_H: f32 = 480.0;
 const TITLE_Y: f32 = 24.0;
 const ROWS_TOP: f32 = 72.0;
 const ROW_GAP: f32 = 26.0;
+const ROW_H: f32 = 22.0;
 const ROW_X: f32 = 24.0;
-const HINT_Y: f32 = 262.0;
+const HINT_BOTTOM: f32 = 26.0;
+const PANEL_MARGIN: f32 = 12.0;
+
+struct Geometry {
+    ps: f32,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    row_gap: f32,
+    row_h: f32,
+    hint_y: f32,
+}
+
+fn geometry(rows: usize, screen_w: f32, screen_h: f32) -> Geometry {
+    let ps = screen_h / REF_H;
+    let ideal_h = ROWS_TOP + rows as f32 * ROW_GAP + HINT_BOTTOM + 8.0;
+    let panel_h = ideal_h.clamp(PANEL_H, REF_H - PANEL_MARGIN * 2.0);
+    let rows_h = panel_h - ROWS_TOP - HINT_BOTTOM - 8.0;
+    let row_gap = if rows == 0 {
+        ROW_GAP
+    } else {
+        ROW_GAP.min(rows_h / rows as f32)
+    };
+    let row_h = ROW_H.min((row_gap - 2.0).max(1.0));
+    let w = PANEL_W * ps;
+    let h = panel_h * ps;
+    Geometry {
+        ps,
+        x: (screen_w - w) / 2.0,
+        y: (screen_h - h) / 2.0,
+        w,
+        h,
+        row_gap,
+        row_h,
+        hint_y: panel_h - HINT_BOTTOM,
+    }
+}
 
 const SELECTED: [f32; 4] = [1.0, 0.8, 0.2, 1.0];
 const NORMAL: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
@@ -222,11 +293,9 @@ pub fn build(
     hint: &str,
     out: &mut Vec<HudQuad>,
 ) {
-    let ps = screen_h / REF_H;
-    let w = PANEL_W * ps;
-    let h = PANEL_H * ps;
-    let x = (screen_w - w) / 2.0;
-    let y = (screen_h - h) / 2.0;
+    let g = geometry(menu.rows.len(), screen_w, screen_h);
+    let ps = g.ps;
+    let (x, y, w, h) = (g.x, g.y, g.w, g.h);
     let ts = scale * ps;
 
     // A dark backing plate, so the menu is legible over a bright map.
@@ -248,7 +317,7 @@ pub fn build(
     );
 
     for (i, row) in menu.rows.iter().enumerate() {
-        let ry = y + (ROWS_TOP + ROW_GAP * i as f32) * ps;
+        let ry = y + (ROWS_TOP + g.row_gap * i as f32) * ps;
         let selected = i == menu.selected && row.selectable();
         let color = match (row.disabled, selected) {
             (_, true) => SELECTED,
@@ -280,7 +349,7 @@ pub fn build(
         font,
         hint,
         x + ROW_X * ps,
-        y + HINT_Y * ps,
+        y + g.hint_y * ps,
         ts * 0.82,
         HEADING,
         out,
@@ -372,5 +441,42 @@ mod tests {
         m.up();
         assert!(m.selected_row().is_some());
         assert!(m.selected_row().is_none_or(|r| !r.selectable()));
+    }
+
+    #[test]
+    fn hover_selects_only_the_row_under_the_pointer() {
+        let mut m = menu();
+        let (x, y) = m.row_center(3, 1600.0, 900.0).unwrap();
+        assert!(m.hover(x, y, 1600.0, 900.0));
+        assert_eq!(m.selected_row().unwrap().id, "quit");
+
+        let (_, disabled_y) = m.row_center(2, 1600.0, 900.0).unwrap();
+        assert!(!m.hover(x, disabled_y, 1600.0, 900.0));
+        assert_eq!(m.selected_row().unwrap().id, "quit");
+    }
+
+    #[test]
+    fn click_hitboxes_do_not_bleed_between_rows_or_outside_the_panel() {
+        let m = menu();
+        let (x, y) = m.row_center(1, 1600.0, 900.0).unwrap();
+        assert_eq!(m.hit_test(x, y, 1600.0, 900.0), Some(1));
+        assert_eq!(
+            m.hit_test(x, y + ROW_GAP * 900.0 / REF_H, 1600.0, 900.0),
+            None
+        );
+        assert_eq!(m.hit_test(0.0, y, 1600.0, 900.0), None);
+    }
+
+    #[test]
+    fn long_menu_keeps_its_last_row_and_hitbox_on_screen() {
+        let m = Menu::new(
+            "PLAY",
+            (0..16)
+                .map(|i| Row::action(format!("row{i}"), format!("Row {i}")))
+                .collect(),
+        );
+        let (x, y) = m.row_center(15, 1600.0, 900.0).unwrap();
+        assert!(y < 900.0, "last row is below the window: {y}");
+        assert_eq!(m.hit_test(x, y, 1600.0, 900.0), Some(15));
     }
 }

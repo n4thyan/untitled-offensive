@@ -14,7 +14,7 @@ mod sky;
 mod viewmodel;
 
 use anyhow::{anyhow, bail, Context, Result};
-use clap::{CommandFactory, Parser};
+use clap::Parser;
 use glam::Vec3;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -547,9 +547,8 @@ fn maplist_for(fs: &Pk3Fs) -> vcod_common::maplist::MapRegistry {
 
 fn map_available_locally(fs: &Pk3Fs, map: &str) -> bool {
     fs.resolve_map(map).is_some()
-        || vcod_common::maplist::find_mw2_install().is_some_and(|install| {
-            vcod_common::maplist::iw4_map_available(&install, map)
-        })
+        || vcod_common::maplist::find_mw2_install()
+            .is_some_and(|install| vcod_common::maplist::iw4_map_available(&install, map))
 }
 
 /// The Create-a-Class profile directory a locally-spawned server reads. Prefers
@@ -821,6 +820,33 @@ fn hud_lines(
     lines
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StartupKind {
+    Frontend,
+    LocalMap,
+    Online,
+}
+
+fn startup_kind(map: Option<&str>, connected: bool) -> StartupKind {
+    if connected {
+        StartupKind::Online
+    } else if map.is_some() {
+        StartupKind::LocalMap
+    } else {
+        StartupKind::Frontend
+    }
+}
+
+fn frontend_mode(registry: vcod_common::maplist::MapRegistry) -> Mode {
+    let mut screens = Box::new(hud::screens::Screens::frontend(registry));
+    screens.open(hud::screens::Screen::Main);
+    let screen_menu = screens.menu();
+    Mode::Menu {
+        screens,
+        screen_menu,
+    }
+}
+
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = Args::parse();
@@ -908,18 +934,12 @@ fn main() -> Result<()> {
         ),
         None => None,
     };
+    let startup = startup_kind(args.map.as_deref(), net_client.is_some());
 
     // Fly and walk need their map up front; online learns it from the
     // server inside the loop and loads through the same path as a map change.
-    let local = if net_client.is_none() {
-        let Some(map) = args.map.as_deref() else {
-            Args::command()
-                .error(
-                    clap::error::ErrorKind::MissingRequiredArgument,
-                    "a map name is required (or pass --list to see the available maps)",
-                )
-                .exit();
-        };
+    let local = if startup == StartupKind::LocalMap {
+        let map = args.map.as_deref().expect("local-map startup has a map");
         // Try IW4 (MW2) maps first
         if let Some(bsp) = try_load_iw4_map(map, &mut fs)? {
             Some((map.to_string(), bsp))
@@ -954,7 +974,7 @@ fn main() -> Result<()> {
         (Vec::new(), None)
     };
 
-    let (hud, localized) = if net_client.is_some() {
+    let (hud, localized) = if startup != StartupKind::LocalMap {
         let hud = match hud::Hud::new(&fs) {
             Ok(hud) => Some(hud),
             Err(e) => {
@@ -985,7 +1005,7 @@ fn main() -> Result<()> {
             None,
             "vcod — connecting".to_string(),
         )
-    } else {
+    } else if startup == StartupKind::LocalMap {
         let (map, bsp) = local.expect("fly or walk without a local map");
         audio.on_gamestate(&map);
         // No server to send configstring 3; every stock MP map ships an
@@ -1006,10 +1026,22 @@ fn main() -> Result<()> {
             })
         };
         (mode, Some(World { bsp }), format!("vcod — {map}"))
+    } else {
+        (
+            frontend_mode(maplist_for(&fs)),
+            None,
+            "UNTITLED".to_string(),
+        )
     };
 
-    println!("click to capture mouse, Esc to release");
-    if args.walk {
+    if startup == StartupKind::Frontend {
+        println!("frontend: arrows or mouse navigate, Enter/click selects, Esc backs out");
+    } else {
+        println!("click to capture mouse, Esc to release");
+    }
+    if startup == StartupKind::Frontend {
+        // The frontend has no gameplay controls.
+    } else if args.walk {
         println!("WASD move, Space jump, Ctrl crouch, Z prone, Q/E lean, Shift walk");
         println!("LMB fire, RMB aim, R reload, 1-6 weapons");
     } else if args.connect.is_some() {
@@ -1045,6 +1077,8 @@ fn main() -> Result<()> {
         window: None,
         renderer: None,
         grabbed: false,
+        cursor_pos: (0.0, 0.0),
+        quit_requested: false,
         fx: fx::sim::FxSystem::new(),
         start: Instant::now(),
         last_frame: Instant::now(),
@@ -1089,7 +1123,7 @@ fn own_view(raw: [i32; 3], delta: [i32; 3]) -> (f32, f32) {
 }
 
 /// The key hint under a client-owned menu screen.
-const MENU_HINT: &str = "Up/Down move  Left/Right change  Enter select  Esc back";
+const MENU_HINT: &str = "Arrows / mouse move  Click / Enter select  Esc back";
 
 /// Retail's view pitch clamp, 87.9 degrees in short units
 /// (docs/research/cod11-gsc-object-model.md, the defender fixture's
@@ -1205,9 +1239,18 @@ fn try_load_iw4_map(map: &str, fs: &mut Pk3Fs) -> Result<Option<vcod_common::bsp
     };
     let ff_path = install.join("zone/english").join(format!("{map}.ff"));
 
-    log::info!("iw4: loaded {} from {} ({} verts, {} indices, {} surfaces, {} planes, {} brushes, {} collision verts, {} entities)",
-        map, ff_path.display(), bsp.verts.len(), bsp.indices.len(), bsp.soups.len(),
-        bsp.planes.len(), bsp.brushes.len(), bsp.collision_verts.len(), bsp.entities.len());
+    log::info!(
+        "iw4: loaded {} from {} ({} verts, {} indices, {} surfaces, {} planes, {} brushes, {} collision verts, {} entities)",
+        map,
+        ff_path.display(),
+        bsp.verts.len(),
+        bsp.indices.len(),
+        bsp.soups.len(),
+        bsp.planes.len(),
+        bsp.brushes.len(),
+        bsp.collision_verts.len(),
+        bsp.entities.len()
+    );
 
     Ok(Some(bsp))
 }
@@ -1407,6 +1450,10 @@ struct App {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     grabbed: bool,
+    /// Last window-space pointer position, used for menu clicks.
+    cursor_pos: (f32, f32),
+    /// Set by the menu action; the event handler exits so `App` is dropped.
+    quit_requested: bool,
     fx: fx::sim::FxSystem,
     /// Origin of the clock effects are timed against.
     start: Instant,
@@ -1445,6 +1492,38 @@ struct App {
 }
 
 impl App {
+    fn screen_captures_input(&self) -> bool {
+        match &self.mode {
+            Mode::Menu { .. } => true,
+            Mode::Online {
+                screens,
+                menu_view,
+                createaclass,
+                ..
+            } => screens.captures_input() || menu_view.is_some() || createaclass.is_some(),
+            _ => false,
+        }
+    }
+
+    fn gameplay_input_active(&self) -> bool {
+        match &self.mode {
+            Mode::Fly(_) | Mode::Walk { .. } => true,
+            Mode::Online {
+                phase,
+                screens,
+                menu_view,
+                createaclass,
+                ..
+            } => {
+                matches!(phase, Phase::Live(_))
+                    && !screens.captures_input()
+                    && menu_view.is_none()
+                    && createaclass.is_none()
+            }
+            Mode::Menu { .. } => false,
+        }
+    }
+
     fn fail(&mut self, event_loop: &ActiveEventLoop, err: anyhow::Error) {
         self.error = Some(err);
         event_loop.exit();
@@ -1453,7 +1532,13 @@ impl App {
     /// Whether Esc should open the pause menu: an online match with a live
     /// phase (a menu over the map), not the connecting or loading screens.
     fn pause_available(&self) -> bool {
-        matches!(&self.mode, Mode::Online { phase: Phase::Live(_), .. })
+        matches!(
+            &self.mode,
+            Mode::Online {
+                phase: Phase::Live(_),
+                ..
+            }
+        )
     }
 
     fn set_grab(&mut self, grabbed: bool) {
@@ -1684,6 +1769,76 @@ impl App {
         consumed
     }
 
+    fn screen_hover(&mut self, x: f32, y: f32) -> bool {
+        let Some((screen_w, screen_h)) = self.renderer.as_ref().map(Renderer::screen_size) else {
+            return false;
+        };
+        match &mut self.mode {
+            Mode::Online {
+                screens,
+                screen_menu,
+                ..
+            } if screens.captures_input() => screen_menu
+                .as_mut()
+                .is_some_and(|menu| screens.handle_hover(menu, x, y, screen_w, screen_h)),
+            Mode::Menu {
+                screens,
+                screen_menu,
+            } => screen_menu
+                .as_mut()
+                .is_some_and(|menu| screens.handle_hover(menu, x, y, screen_w, screen_h)),
+            _ => false,
+        }
+    }
+
+    /// Handle a press while a client-owned screen is up. Returns true even
+    /// when the pointer missed every row so a modal screen never clicks through.
+    fn screen_click(&mut self) -> bool {
+        let Some((screen_w, screen_h)) = self.renderer.as_ref().map(Renderer::screen_size) else {
+            return false;
+        };
+        let (x, y) = self.cursor_pos;
+        let mut action = None;
+        let consumed = match &mut self.mode {
+            Mode::Online {
+                screens,
+                screen_menu,
+                ..
+            } if screens.captures_input() => {
+                if let Some(menu) = screen_menu.as_mut() {
+                    action = screens.handle_click(menu, x, y, screen_w, screen_h);
+                }
+                true
+            }
+            Mode::Menu {
+                screens,
+                screen_menu,
+            } => {
+                if let Some(menu) = screen_menu.as_mut() {
+                    action = screens.handle_click(menu, x, y, screen_w, screen_h);
+                }
+                true
+            }
+            _ => false,
+        };
+        if let Some(action) = action {
+            self.run_screen_action(action);
+        }
+        consumed
+    }
+
+    fn screen_wheel(&mut self, scroll: f32) -> bool {
+        if scroll == 0.0 {
+            return false;
+        }
+        let code = if scroll > 0.0 {
+            KeyCode::ArrowUp
+        } else {
+            KeyCode::ArrowDown
+        };
+        self.screen_key(code)
+    }
+
     /// Carry out a screen's action. Split out because it needs `&mut self`
     /// whole, while `screen_key` holds a borrow of the mode.
     fn run_screen_action(&mut self, action: hud::screens::Action) {
@@ -1730,9 +1885,8 @@ impl App {
                     ..
                 } = &mut self.mode
                 {
-                    let mut editor = hud::createaclass::CreateAClass::from_configstrings(
-                        net.configstrings(),
-                    );
+                    let mut editor =
+                        hud::createaclass::CreateAClass::from_configstrings(net.configstrings());
                     // Open on the saved profile, not a blank grid: this is the
                     // round trip the screen was missing.
                     if let Some(profile) = &profile {
@@ -1747,7 +1901,7 @@ impl App {
                 self.leave_match();
             }
             Action::Quit => {
-                std::process::exit(0);
+                self.quit_requested = true;
             }
             Action::StartMatch {
                 playlist,
@@ -1877,10 +2031,8 @@ impl App {
                     log::info!(
                         "menu: connecting to the local match on {} (server log: {})",
                         addr,
-                        s.log_path().map_or_else(
-                            || "none".to_string(),
-                            |p| p.display().to_string()
-                        )
+                        s.log_path()
+                            .map_or_else(|| "none".to_string(), |p| p.display().to_string())
                     );
                 }
             }
@@ -1906,7 +2058,7 @@ impl App {
             log::info!("menu: left an external match (no local server to stop)");
         }
         self.connect_addr = None;
-        let screens = hud::screens::Screens::new(maplist_for(&self.fs));
+        let screens = hud::screens::Screens::frontend(maplist_for(&self.fs));
         let mut screens = Box::new(screens);
         screens.open(hud::screens::Screen::Main);
         let screen_menu = screens.menu();
@@ -1967,7 +2119,7 @@ impl ApplicationHandler for App {
                 return self.fail(
                     event_loop,
                     anyhow::Error::new(e).context("cannot create a window"),
-                )
+                );
             }
         };
         match Renderer::new(window.clone(), &self.fs) {
@@ -2007,6 +2159,13 @@ impl ApplicationHandler for App {
                     return;
                 }
                 if pressed && self.menu_key(code) {
+                    if self.screen_captures_input() {
+                        self.set_grab(false);
+                        self.clear_held_keys();
+                    }
+                    if self.quit_requested {
+                        event_loop.exit();
+                    }
                     return;
                 }
                 if code == KeyCode::Escape && pressed {
@@ -2112,12 +2271,27 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Focused(false) => self.clear_held_keys(),
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor_pos = (position.x as f32, position.y as f32);
+                self.screen_hover(self.cursor_pos.0, self.cursor_pos.1);
+            }
             WindowEvent::MouseInput { state, button, .. } => {
                 use winit::event::MouseButton;
                 let pressed = state == ElementState::Pressed;
+                if self.screen_captures_input() {
+                    if button == MouseButton::Left && pressed {
+                        self.screen_click();
+                        if self.quit_requested {
+                            event_loop.exit();
+                        }
+                    }
+                    return;
+                }
                 // the click that captures the mouse must not also fire
                 if button == MouseButton::Left && pressed && !self.grabbed {
-                    self.set_grab(true);
+                    if self.gameplay_input_active() {
+                        self.set_grab(true);
+                    }
                     return;
                 }
                 if !self.grabbed {
@@ -2145,9 +2319,7 @@ impl ApplicationHandler for App {
                             return;
                         }
                         match button {
-                            MouseButton::Left => {
-                                input.key(play::input::Action::Attack, pressed)
-                            }
+                            MouseButton::Left => input.key(play::input::Action::Attack, pressed),
                             MouseButton::Right => input.key(play::input::Action::Ads, pressed),
                             _ => {}
                         }
@@ -2160,6 +2332,9 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 60.0,
                 };
+                if self.screen_wheel(scroll) {
+                    return;
+                }
                 let grabbed = self.grabbed;
                 match &mut self.mode {
                     Mode::Fly(cam) => cam.adjust_speed(scroll),
@@ -2169,7 +2344,11 @@ impl ApplicationHandler for App {
                         menu_view,
                         screens,
                         ..
-                    } if grabbed && menu_view.is_none() && !screens.captures_input() && scroll != 0.0 => {
+                    } if grabbed
+                        && menu_view.is_none()
+                        && !screens.captures_input()
+                        && scroll != 0.0 =>
+                    {
                         let action = if scroll < 0.0 {
                             play::input::Action::NextWeapon
                         } else {
@@ -2194,10 +2373,7 @@ impl ApplicationHandler for App {
                 // A local match whose server exited on its own (a bad map, a
                 // port clash) is reported here rather than left as a silent
                 // connection failure; the net client then reports the drop.
-                let server_died = self
-                    .local_server
-                    .as_mut()
-                    .is_some_and(|s| !s.is_running());
+                let server_died = self.local_server.as_mut().is_some_and(|s| !s.is_running());
                 if server_died {
                     if let Some(s) = &self.local_server {
                         log::error!(
@@ -2533,8 +2709,7 @@ impl ApplicationHandler for App {
                                                 // The new paks may carry maps the
                                                 // old ones lacked; the selector
                                                 // must offer them.
-                                                screens
-                                                    .set_registry(maplist_for(&self.fs));
+                                                screens.set_registry(maplist_for(&self.fs));
                                                 r.reopen(&self.fs);
                                                 view.reopen();
                                             }
@@ -2758,7 +2933,10 @@ impl ApplicationHandler for App {
                                         None
                                     };
                                     let view_ps = rig_ps;
-                                    debug_assert!(!following || view_ps.is_some(), "the killcam has no playerstate to draw the killer's weapon from");
+                                    debug_assert!(
+                                        !following || view_ps.is_some(),
+                                        "the killcam has no playerstate to draw the killer's weapon from"
+                                    );
                                     if let Some(ps) = &view_ps {
                                         if let Some(models) =
                                             view.sync_rig(&self.fs, net.configstrings(), ps)
@@ -3327,7 +3505,7 @@ impl ApplicationHandler for App {
 
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
         if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
-            if !self.grabbed {
+            if !self.grabbed || self.screen_captures_input() {
                 return;
             }
             let (dx, dy) = (dx as f32, dy as f32);
@@ -3335,7 +3513,10 @@ impl ApplicationHandler for App {
                 Mode::Menu { .. } => {}
                 Mode::Fly(cam) => cam.mouse_delta(dx, dy),
                 Mode::Online {
-                    input, view, screens, ..
+                    input,
+                    view,
+                    screens,
+                    ..
                 } => {
                     // A menu owns input: the mouse must not turn the player.
                     if screens.captures_input() {
@@ -3364,6 +3545,33 @@ impl ApplicationHandler for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ordinary_no_map_launch_is_frontend_only() {
+        assert_eq!(startup_kind(None, false), StartupKind::Frontend);
+        let mode = frontend_mode(vcod_common::maplist::MapRegistry::from_ids(&[
+            "mp_carentan",
+        ]));
+        match mode {
+            Mode::Menu {
+                screens,
+                screen_menu,
+            } => {
+                assert_eq!(screens.current(), Some(hud::screens::Screen::Main));
+                assert!(screen_menu.is_some());
+            }
+            _ => panic!("ordinary boot created gameplay state"),
+        }
+    }
+
+    #[test]
+    fn explicit_map_and_connect_still_select_gameplay_lifecycles() {
+        assert_eq!(
+            startup_kind(Some("mp_carentan"), false),
+            StartupKind::LocalMap
+        );
+        assert_eq!(startup_kind(None, true), StartupKind::Online);
+    }
 
     fn make_pk3(dir: &std::path::Path, file: &str, entries: &[(&str, &[u8])]) {
         use std::io::Write;

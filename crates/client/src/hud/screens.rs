@@ -31,7 +31,7 @@ use super::shell::{Menu, Outcome, Row};
 /// Which screen is up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
-    /// The root multiplayer menu: Play, Create-a-Class, Stats, Options, Quit.
+    /// The root multiplayer menu: Play, Create-a-Class, Options, Quit.
     Main,
     /// Playlist / map / gametype / bots / bot combat, and START MATCH.
     Play,
@@ -84,6 +84,10 @@ pub struct Screens {
     bot_combat: bool,
     /// The class list the picker shows, refreshed from the profile.
     classes: Vec<String>,
+    /// Whether Create-a-Class has a server-backed profile to edit.
+    class_editor_available: bool,
+    /// A root menu over gameplay may close; the standalone frontend may not.
+    root_closable: bool,
 }
 
 /// How many bots the Play screen steps through, from MIN to MAX.
@@ -92,7 +96,10 @@ fn bot_choices() -> Vec<String> {
 }
 
 fn playlist_choices() -> Vec<String> {
-    PLAYLISTS.iter().map(|p| p.display_name.to_string()).collect()
+    PLAYLISTS
+        .iter()
+        .map(|p| p.display_name.to_string())
+        .collect()
 }
 
 fn on_off() -> Vec<String> {
@@ -134,10 +141,20 @@ impl Screens {
             bots: 8.min(MAX_BOTS),
             bot_combat: true,
             classes: Vec::new(),
+            class_editor_available: true,
+            root_closable: true,
         };
         s.playlist = s.first_populated_playlist();
         s.bots = s.selected_playlist().default_bots.min(MAX_BOTS);
         s
+    }
+
+    /// Screens for a frontend with no world, connection, or server.
+    pub fn frontend(registry: MapRegistry) -> Screens {
+        let mut screens = Screens::new(registry);
+        screens.class_editor_available = false;
+        screens.root_closable = false;
+        screens
     }
 
     /// The first playlist with a playable map, so the screen does not open on
@@ -248,8 +265,11 @@ impl Screens {
                 vec![
                     Row::divider("MULTIPLAYER"),
                     Row::action("play", "Play"),
-                    Row::action("createaclass", "Create-a-Class"),
-                    Row::disabled("stats", "Stats / Leaderboards"),
+                    if self.class_editor_available {
+                        Row::action("createaclass", "Create-a-Class")
+                    } else {
+                        Row::disabled("createaclass", "Create-a-Class (join a match)")
+                    },
                     Row::disabled("options", "Options"),
                     Row::action("quit", "Quit"),
                 ],
@@ -289,10 +309,11 @@ impl Screens {
             .iter()
             .map(|m| m.name.clone())
             .collect();
+        let has_maps = !maps.is_empty();
 
         let mut rows = vec![Row::divider("MATCH SETUP")];
         rows.push(Row::selector("playlist", "Playlist", playlist_choices()));
-        if maps.is_empty() {
+        if !has_maps {
             rows.push(Row::disabled("map", "Map:  (none in this playlist)"));
         } else {
             rows.push(Row::selector("map", "Map", maps));
@@ -311,7 +332,11 @@ impl Screens {
         rows.extend(self.map_info_rows());
 
         rows.push(Row::divider(""));
-        rows.push(Row::action("start", "START MATCH"));
+        if !has_maps {
+            rows.push(Row::disabled("start", "START MATCH"));
+        } else {
+            rows.push(Row::action("start", "START MATCH"));
+        }
         rows.push(Row::action("back", "Back"));
         let mut menu = Menu::new("PLAY", rows);
         self.seed_play_values(&mut menu);
@@ -374,8 +399,8 @@ impl Screens {
     ///
     /// The screen's held settings are read back out of the menu on the way
     /// through, so a value the player stepped is remembered the next time the
-    /// screen opens. The caller rebuilds the menu each frame, so state cannot
-    /// live in the menu alone.
+    /// screen opens. The caller keeps the menu between input events, but the
+    /// settings also survive the rebuild required by a screen transition.
     pub fn handle_key(&mut self, menu: &mut Menu, key: MenuKey) -> (Outcome, Option<Action>) {
         match key {
             MenuKey::Up => {
@@ -407,12 +432,48 @@ impl Screens {
                 // into gameplay from a settings screen.
                 let action = match self.current {
                     Some(Screen::Play) | Some(Screen::ClassPicker) => Action::Open(Screen::Main),
-                    Some(Screen::Pause) | Some(Screen::Main) => Action::Close,
-                    None => Action::Nothing,
+                    Some(Screen::Pause) => Action::Close,
+                    Some(Screen::Main) if self.root_closable => Action::Close,
+                    Some(Screen::Main) | None => Action::Nothing,
                 };
                 (Outcome::Close, Some(action))
             }
             MenuKey::None => (Outcome::Ignored, None),
+        }
+    }
+
+    /// Hover selection uses the shell's rendered hitboxes.
+    pub fn handle_hover(
+        &mut self,
+        menu: &mut Menu,
+        x: f32,
+        y: f32,
+        screen_w: f32,
+        screen_h: f32,
+    ) -> bool {
+        menu.hover(x, y, screen_w, screen_h)
+    }
+
+    /// Click a row through the same action/value paths as keyboard input.
+    pub fn handle_click(
+        &mut self,
+        menu: &mut Menu,
+        x: f32,
+        y: f32,
+        screen_w: f32,
+        screen_h: f32,
+    ) -> Option<Action> {
+        let index = menu.hit_test(x, y, screen_w, screen_h)?;
+        menu.selected = index;
+        if matches!(
+            menu.selected_row().map(|r| &r.kind),
+            Some(super::shell::RowKind::Selector { .. })
+        ) {
+            let delta = if x < screen_w / 2.0 { -1 } else { 1 };
+            self.step_value(menu, delta);
+            None
+        } else {
+            self.handle_key(menu, MenuKey::Activate).1
         }
     }
 
@@ -679,7 +740,7 @@ mod tests {
         ui.key(MenuKey::Right); // map -> Pavlov
         ui.select_row("bots");
         ui.key(MenuKey::Right); // bots -> 9
-        // Leave and come back.
+                                // Leave and come back.
         ui.s.close();
         ui.s.open(Screen::Play);
         ui.refresh();
@@ -828,7 +889,11 @@ mod tests {
     #[test]
     fn every_playlist_has_a_valid_gametype() {
         for p in PLAYLISTS {
-            assert!(!gametype_id(p, 0).is_empty(), "{} has no first gametype", p.id);
+            assert!(
+                !gametype_id(p, 0).is_empty(),
+                "{} has no first gametype",
+                p.id
+            );
             assert!(
                 GAMETYPES.iter().any(|(id, _)| *id == gametype_id(p, 0)),
                 "{}: unknown first gametype",
@@ -843,5 +908,68 @@ mod tests {
     fn playlist_lookup_is_total() {
         assert!(vcod_common::maplist::playlist_by_id("quick_play").is_some());
         assert!(vcod_common::maplist::playlist_by_id("nope").is_none());
+    }
+
+    #[test]
+    fn frontend_disables_actions_that_require_a_live_server() {
+        let mut s = Screens::frontend(MapRegistry::from_ids(&["mp_carentan"]));
+        s.open(Screen::Main);
+        let menu = s.menu().unwrap();
+        assert!(menu.rows.iter().any(|r| r.id == "play" && !r.disabled));
+        assert!(menu
+            .rows
+            .iter()
+            .any(|r| r.id == "createaclass" && r.disabled));
+        assert!(menu.rows.iter().any(|r| r.id == "options" && r.disabled));
+        assert!(menu.rows.iter().any(|r| r.id == "quit" && !r.disabled));
+        assert!(!menu.rows.iter().any(|r| r.id == "stats"));
+    }
+
+    #[test]
+    fn mouse_hover_and_click_use_the_same_selection_and_action_path() {
+        let mut ui = Ui::new(Screen::Main);
+        let quit = ui.menu.rows.iter().position(|r| r.id == "quit").unwrap();
+        let (x, y) = ui.menu.row_center(quit, 1600.0, 900.0).unwrap();
+        assert!(ui.s.handle_hover(&mut ui.menu, x, y, 1600.0, 900.0));
+        assert_eq!(ui.menu.selected_row().unwrap().id, "quit");
+        assert_eq!(
+            ui.s.handle_click(&mut ui.menu, x, y, 1600.0, 900.0),
+            Some(Action::Quit)
+        );
+    }
+
+    #[test]
+    fn clicking_a_selector_half_steps_its_value() {
+        let mut ui = Ui::new(Screen::Play);
+        let map = ui.menu.rows.iter().position(|r| r.id == "map").unwrap();
+        let (x, y) = ui.menu.row_center(map, 1600.0, 900.0).unwrap();
+        assert_eq!(ui.menu.value_of("map"), Some("Carentan"));
+        assert_eq!(
+            ui.s.handle_click(&mut ui.menu, x + 100.0, y, 1600.0, 900.0),
+            None
+        );
+        assert_eq!(ui.menu.value_of("map"), Some("Harbor"));
+        assert_eq!(ui.s.selected_map(), Some("mp_harbor"));
+    }
+
+    #[test]
+    fn empty_playlist_disables_start_match() {
+        let mut s = screens();
+        s.playlist = 3;
+        s.open(Screen::Play);
+        let menu = s.menu().unwrap();
+        assert!(menu.rows.iter().any(|r| r.id == "start" && r.disabled));
+    }
+
+    #[test]
+    fn back_from_the_root_menu_does_not_leave_a_blank_frontend() {
+        let mut s = Screens::frontend(MapRegistry::from_ids(&["mp_carentan"]));
+        s.open(Screen::Main);
+        let mut menu = s.menu().unwrap();
+        assert_eq!(
+            s.handle_key(&mut menu, MenuKey::Back).1,
+            Some(Action::Nothing)
+        );
+        assert_eq!(s.current(), Some(Screen::Main));
     }
 }
