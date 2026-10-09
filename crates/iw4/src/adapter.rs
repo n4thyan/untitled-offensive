@@ -3,11 +3,14 @@
 //! Converts parsed MW2 world data into the vcod Bsp representation
 //! so the existing renderer, collision, and spawn systems can consume it.
 
+use std::collections::HashMap;
+
 use crate::{
-    ClipMapGeometry, GfxWorldGeometry, MapEntsGeometry, Result, ZoneStream,
+    AssetLinkSink, AssetSink, AssetType, ClipMapGeometry, GfxWorldGeometry, MapEntsGeometry, Ptr,
+    Result, ScriptStrings, ZonePtr, ZoneStream, load_asset_at_observed,
 };
 use vcod_common::bsp::{
-    AabbNode, Bsp, Brush, BrushSide, Cell, DrawVert, Material, Plane, TriangleSoup,
+    AabbNode, Brush, BrushSide, Bsp, Cell, DrawVert, Material, Plane, TriangleSoup,
 };
 
 /// Sanity limits for IW4 geometry fields.
@@ -21,6 +24,122 @@ const MAX_BRUSHES: usize = 5_000;
 const MAX_VERTS: usize = 500_000;
 const MAX_TRIS: usize = 1_000_000;
 const MAX_ENTITY_CHARS: usize = 200_000;
+
+/// World data plus the asset-slot links needed to bind each surface to its
+/// material's diffuse image. Asset references point at XAsset slots, not the
+/// temporary bodies used while deserializing them.
+#[derive(Default)]
+pub struct WorldCapture {
+    pub gfx_world: Option<GfxWorldGeometry>,
+    pub clip_map: Option<ClipMapGeometry>,
+    pub map_ents: Option<MapEntsGeometry>,
+    pub material_images: HashMap<Ptr, String>,
+    image_names: HashMap<Ptr, String>,
+    image_aliases: HashMap<Ptr, Ptr>,
+}
+
+impl WorldCapture {
+    fn image_name(&self, mut slot: Ptr) -> Option<&str> {
+        for _ in 0..16 {
+            if let Some(name) = self.image_names.get(&slot) {
+                return Some(name);
+            }
+            slot = *self.image_aliases.get(&slot)?;
+        }
+        None
+    }
+
+    fn capture_material(&mut self, s: &ZoneStream<'_>, slot: Ptr, insert_slot: Option<Ptr>) {
+        const SEMANTIC_COLOR_MAP: u8 = 2;
+        let Some(material) = s.latest_material() else {
+            return;
+        };
+        let Some(textures) = material.textures else {
+            return;
+        };
+        for i in 0..material.texture_count {
+            let texture = textures.at(i * material.texture_stride);
+            if s.u8_at(texture, 7).ok() != Some(SEMANTIC_COLOR_MAP) {
+                continue;
+            }
+            let image_slot = texture.at(8);
+            let resolved = match s.ptr_at(image_slot, 0).ok() {
+                Some(ZonePtr::Offset(target)) => target,
+                Some(ZonePtr::Following | ZonePtr::Insert) => image_slot,
+                _ => continue,
+            };
+            if let Some(name) = self.image_name(resolved).map(str::to_owned) {
+                let path = format!("images/{name}");
+                self.material_images.insert(slot, path.clone());
+                if let Some(insert_slot) = insert_slot {
+                    self.material_images.insert(insert_slot, path);
+                }
+                return;
+            }
+        }
+    }
+}
+
+impl AssetLinkSink for WorldCapture {
+    fn loaded(
+        &mut self,
+        s: &ZoneStream<'_>,
+        ty: AssetType,
+        slot: Ptr,
+        insert_slot: Option<Ptr>,
+    ) -> Result<()> {
+        match ty {
+            AssetType::Image => {
+                if let Some(name) = s
+                    .latest_image()
+                    .and_then(|image| image.name)
+                    .and_then(|name| s.cstr(name).ok())
+                {
+                    let name = name.to_owned();
+                    self.image_names.insert(slot, name.clone());
+                    if let Some(insert_slot) = insert_slot {
+                        self.image_names.insert(insert_slot, name);
+                    }
+                }
+            }
+            AssetType::Material => self.capture_material(s, slot, insert_slot),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn alias(&mut self, ty: AssetType, slot: Ptr, target: Ptr) -> Result<()> {
+        if ty == AssetType::Image {
+            self.image_aliases.insert(slot, target);
+        }
+        Ok(())
+    }
+}
+
+impl AssetSink for WorldCapture {
+    fn set_script_strings(&mut self, _strings: ScriptStrings) {}
+    fn begin_assets(&mut self, _count: usize) {}
+
+    fn load_asset(
+        &mut self,
+        s: &mut ZoneStream<'_>,
+        _index: usize,
+        ty: AssetType,
+        slot: Ptr,
+    ) -> Result<()> {
+        load_asset_at_observed(s, ty, slot, self)?;
+        if let Some(gfx_world) = s.gfx_world() {
+            self.gfx_world = Some(gfx_world);
+        }
+        if let Some(clip_map) = s.clip_map() {
+            self.clip_map = Some(clip_map);
+        }
+        if let Some(map_ents) = s.map_ents() {
+            self.map_ents = Some(map_ents);
+        }
+        Ok(())
+    }
+}
 
 /// Errors from the IW4->Bsp adapter
 #[derive(Debug)]
@@ -40,19 +159,8 @@ impl std::fmt::Display for AdapterError {
 
 impl std::error::Error for AdapterError {}
 
-fn checked_usize(v: u32, name: &str) -> Result<usize> {
+fn checked_usize(v: u32, _name: &str) -> Result<usize> {
     let v = v as usize;
-    if v > MAX_VERTICES {
-        return Err(crate::ZoneError::Truncated {
-            at: 0,
-            needed: v,
-            len: v,
-        });
-    }
-    Ok(v)
-}
-
-fn checked_usize64(v: usize, name: &str) -> Result<usize> {
     if v > MAX_VERTICES {
         return Err(crate::ZoneError::Truncated {
             at: 0,
@@ -67,6 +175,14 @@ fn checked_usize64(v: usize, name: &str) -> Result<usize> {
 pub fn gfxworld_to_draw_geometry(
     s: &ZoneStream<'_>,
     gfx: &GfxWorldGeometry,
+) -> Result<(Vec<DrawVert>, Vec<u16>, Vec<TriangleSoup>, Vec<Material>)> {
+    gfxworld_to_draw_geometry_with_materials(s, gfx, &HashMap::new())
+}
+
+pub fn gfxworld_to_draw_geometry_with_materials(
+    s: &ZoneStream<'_>,
+    gfx: &GfxWorldGeometry,
+    material_images: &HashMap<Ptr, String>,
 ) -> Result<(Vec<DrawVert>, Vec<u16>, Vec<TriangleSoup>, Vec<Material>)> {
     // Sanity checks on counts
     let vertex_count = checked_usize(gfx.vertex_count as u32, "vertex_count")?;
@@ -100,30 +216,15 @@ pub fn gfxworld_to_draw_geometry(
         let mut verts = Vec::with_capacity(vertex_count);
         for i in 0..vertex_count {
             let base = vptr.at(i * 44);
-            let pos = [
-                s.f32_at(base, 0)?,
-                s.f32_at(base, 4)?,
-                s.f32_at(base, 8)?,
-            ];
-            let normal = [
-                s.f32_at(base, 12)?,
-                s.f32_at(base, 16)?,
-                s.f32_at(base, 20)?,
-            ];
-            let uv = [
-                s.f32_at(base, 24)?,
-                s.f32_at(base, 28)?,
-            ];
-            let color = [
-                s.u8_at(base, 32)?,
-                s.u8_at(base, 33)?,
-                s.u8_at(base, 34)?,
-                s.u8_at(base, 35)?,
-            ];
-            let lm_uv = [
-                s.f32_at(base, 36)?,
-                s.f32_at(base, 40)?,
-            ];
+            let pos = [s.f32_at(base, 0)?, s.f32_at(base, 4)?, s.f32_at(base, 8)?];
+            // IW4 GfxWorldVertex: position, packed color, diffuse UV,
+            // lightmap UV, then packed normal/tangent. Until packed normals and
+            // real lightmaps are decoded, neutral inputs produce a readable
+            // fullbright world through the existing white-lightmap path.
+            let normal = [0.0, 0.0, 1.0];
+            let uv = [s.f32_at(base, 20)?, s.f32_at(base, 24)?];
+            let color = [128, 128, 128, 255];
+            let lm_uv = [0.0, 0.0];
             verts.push(DrawVert {
                 pos,
                 uv,
@@ -160,14 +261,14 @@ pub fn gfxworld_to_draw_geometry(
     // vcod TriangleSoup: material(u16), lightmap(u16), first_vertex(u32),
     //   vertex_count(u16), first_index(u32), index_count(u16)
     //
-    // For the FIRST milestone, use ONE fallback material for all surfaces.
     let mut soups = Vec::new();
     let fallback_material = Material {
         name: "iw4/fallback".to_string(),
         surface_flags: 0,
         content_flags: 0,
     };
-    let materials = vec![fallback_material];
+    let mut materials = vec![fallback_material];
+    let mut material_indices: HashMap<String, u16> = HashMap::new();
 
     if let Some(sptr) = gfx.surfaces {
         let stride = s.layout(24, 32);
@@ -178,6 +279,22 @@ pub fn gfxworld_to_draw_geometry(
             let surf_tri_count = s.u16_at(surf, s.layout(10, 10))?;
             let first_index = s.u32_at(surf, s.layout(12, 12))?;
             let surf_index_count = (surf_tri_count as u32).saturating_mul(3) as u16;
+            let material = match s.ptr_at(surf, 16)? {
+                ZonePtr::Offset(slot) => material_images.get(&slot),
+                _ => None,
+            }
+            .map(|name| {
+                *material_indices.entry(name.clone()).or_insert_with(|| {
+                    let index = materials.len() as u16;
+                    materials.push(Material {
+                        name: name.clone(),
+                        surface_flags: 0,
+                        content_flags: 0,
+                    });
+                    index
+                })
+            })
+            .unwrap_or(0);
 
             // Bounds checking: surface ranges must be within total geometry
             let fv = first_vertex as usize;
@@ -201,7 +318,7 @@ pub fn gfxworld_to_draw_geometry(
             }
 
             soups.push(TriangleSoup {
-                material: 0, // fallback material
+                material,
                 lightmap: 0,
                 first_vertex,
                 vertex_count: surf_vertex_count,
@@ -218,22 +335,48 @@ pub fn gfxworld_to_draw_geometry(
 pub fn clipmap_to_collision(
     s: &ZoneStream<'_>,
     clip: &ClipMapGeometry,
-) -> Result<(Vec<Plane>, Vec<BrushSide>, Vec<Brush>, Vec<[f32; 3]>, Vec<u16>)> {
+) -> Result<(
+    Vec<Plane>,
+    Vec<BrushSide>,
+    Vec<Brush>,
+    Vec<[f32; 3]>,
+    Vec<u16>,
+)> {
     // Sanity checks
     if clip.plane_count > MAX_PLANES {
-        return Err(crate::ZoneError::Truncated { at: 0, needed: clip.plane_count, len: clip.plane_count });
+        return Err(crate::ZoneError::Truncated {
+            at: 0,
+            needed: clip.plane_count,
+            len: clip.plane_count,
+        });
     }
     if clip.brush_side_count > MAX_BRUSH_SIDES {
-        return Err(crate::ZoneError::Truncated { at: 0, needed: clip.brush_side_count, len: clip.brush_side_count });
+        return Err(crate::ZoneError::Truncated {
+            at: 0,
+            needed: clip.brush_side_count,
+            len: clip.brush_side_count,
+        });
     }
     if clip.brush_count > MAX_BRUSHES {
-        return Err(crate::ZoneError::Truncated { at: 0, needed: clip.brush_count, len: clip.brush_count });
+        return Err(crate::ZoneError::Truncated {
+            at: 0,
+            needed: clip.brush_count,
+            len: clip.brush_count,
+        });
     }
     if clip.vert_count > MAX_VERTS {
-        return Err(crate::ZoneError::Truncated { at: 0, needed: clip.vert_count, len: clip.vert_count });
+        return Err(crate::ZoneError::Truncated {
+            at: 0,
+            needed: clip.vert_count,
+            len: clip.vert_count,
+        });
     }
     if clip.tri_count > MAX_TRIS {
-        return Err(crate::ZoneError::Truncated { at: 0, needed: clip.tri_count, len: clip.tri_count });
+        return Err(crate::ZoneError::Truncated {
+            at: 0,
+            needed: clip.tri_count,
+            len: clip.tri_count,
+        });
     }
 
     // Read planes: 20 bytes each (normal: 12, dist: 4, type: 4)
@@ -241,31 +384,23 @@ pub fn clipmap_to_collision(
     if let Some(pptr) = clip.planes {
         for i in 0..clip.plane_count {
             let base = pptr.at(i * 20);
-            let normal = [
-                s.f32_at(base, 0)?,
-                s.f32_at(base, 4)?,
-                s.f32_at(base, 8)?,
-            ];
+            let normal = [s.f32_at(base, 0)?, s.f32_at(base, 4)?, s.f32_at(base, 8)?];
             let dist = s.f32_at(base, 12)?;
             planes.push(Plane { normal, dist });
         }
     }
 
     // Temporarily disable IW4 brush conversion - not yet properly decoded
-// TODO: Native IW4 cbrush_t conversion still needs semantic decoding
-let brush_sides = Vec::new();
-let brushes = Vec::new();
+    // TODO: Native IW4 cbrush_t conversion still needs semantic decoding
+    let brush_sides = Vec::new();
+    let brushes = Vec::new();
 
-// Read collision verts: 12 bytes each
+    // Read collision verts: 12 bytes each
     let mut collision_verts = Vec::new();
     if let Some(vptr) = clip.verts {
         for i in 0..clip.vert_count {
             let base = vptr.at(i * 12);
-            collision_verts.push([
-                s.f32_at(base, 0)?,
-                s.f32_at(base, 4)?,
-                s.f32_at(base, 8)?,
-            ]);
+            collision_verts.push([s.f32_at(base, 0)?, s.f32_at(base, 4)?, s.f32_at(base, 8)?]);
         }
     }
 
@@ -278,14 +413,17 @@ let brushes = Vec::new();
         }
     }
 
-    Ok((planes, brush_sides, brushes, collision_verts, collision_indices))
+    Ok((
+        planes,
+        brush_sides,
+        brushes,
+        collision_verts,
+        collision_indices,
+    ))
 }
 
 /// Read the entity string from MapEnts
-pub fn mapents_to_entities(
-    s: &ZoneStream<'_>,
-    map_ents: &MapEntsGeometry,
-) -> Result<String> {
+pub fn mapents_to_entities(s: &ZoneStream<'_>, map_ents: &MapEntsGeometry) -> Result<String> {
     if map_ents.entity_chars > MAX_ENTITY_CHARS {
         return Err(crate::ZoneError::Truncated {
             at: 0,
@@ -312,7 +450,18 @@ pub fn build_bsp(
     clip: &ClipMapGeometry,
     map_ents: &MapEntsGeometry,
 ) -> Result<Bsp> {
-    let (verts, indices, soups, mut materials) = gfxworld_to_draw_geometry(s, gfx)?;
+    build_bsp_with_materials(s, gfx, clip, map_ents, &HashMap::new())
+}
+
+pub fn build_bsp_with_materials(
+    s: &ZoneStream<'_>,
+    gfx: &GfxWorldGeometry,
+    clip: &ClipMapGeometry,
+    map_ents: &MapEntsGeometry,
+    material_images: &HashMap<Ptr, String>,
+) -> Result<Bsp> {
+    let (verts, indices, soups, mut materials) =
+        gfxworld_to_draw_geometry_with_materials(s, gfx, material_images)?;
     let (planes, brush_sides, brushes, collision_verts, collision_indices) =
         clipmap_to_collision(s, clip)?;
     let entities = mapents_to_entities(s, map_ents)?;
@@ -321,7 +470,11 @@ pub fn build_bsp(
     // IW4 brush material indices refer to the IW4 material table which we
     // don't fully load; create fallback entries so indexing doesn't panic.
     // Set CONTENTS_SOLID so the collision system actually uses these brushes.
-    let max_brush_mat = brushes.iter().map(|b| b.material as usize).max().unwrap_or(0);
+    let max_brush_mat = brushes
+        .iter()
+        .map(|b| b.material as usize)
+        .max()
+        .unwrap_or(0);
     if max_brush_mat >= materials.len() {
         let fallback = materials.first().cloned().unwrap_or(Material {
             name: "iw4/fallback".to_string(),
@@ -339,8 +492,14 @@ pub fn build_bsp(
     // IW4's vertexCount describes a shared vertex block, not a per-soup range.
     // Many soups share the same first_vertex/vertex_count but reference tiny
     // disjoint subsets. Using the declared range produces enormous false AABBs.
+    //
+    // TEMPORARY DIAGNOSTIC: Skip soups whose referenced-only bounds exceed 10000.
+    // These are likely sky/horizon surfaces that cause giant ribbons.
+    const MAX_REFERENCED_COORD: f32 = 10000.0;
     let mut world_mins = [f32::INFINITY; 3];
     let mut world_maxs = [f32::NEG_INFINITY; 3];
+    let mut skipped_soups = 0usize;
+    let mut kept_soups = Vec::new();
     for soup in &soups {
         let fv = soup.first_vertex as usize;
         let fi = soup.first_index as usize;
@@ -348,17 +507,46 @@ pub fn build_bsp(
         if fi + ic > indices.len() {
             continue;
         }
+        let mut soup_min = [f32::INFINITY; 3];
+        let mut soup_max = [f32::NEG_INFINITY; 3];
         for &local_idx in &indices[fi..fi + ic] {
             let global = fv + local_idx as usize;
             if global < verts.len() {
                 let v = &verts[global];
                 for a in 0..3 {
-                    world_mins[a] = world_mins[a].min(v.pos[a]);
-                    world_maxs[a] = world_maxs[a].max(v.pos[a]);
+                    soup_min[a] = soup_min[a].min(v.pos[a]);
+                    soup_max[a] = soup_max[a].max(v.pos[a]);
                 }
             }
         }
+        let max_abs = soup_min
+            .iter()
+            .chain(soup_max.iter())
+            .map(|x| x.abs())
+            .fold(0.0f32, f32::max);
+        if max_abs > MAX_REFERENCED_COORD {
+            skipped_soups += 1;
+            continue;
+        }
+        kept_soups.push(TriangleSoup {
+            material: soup.material,
+            lightmap: soup.lightmap,
+            first_vertex: soup.first_vertex,
+            vertex_count: soup.vertex_count,
+            index_count: soup.index_count,
+            first_index: soup.first_index,
+        });
+        for a in 0..3 {
+            world_mins[a] = world_mins[a].min(soup_min[a]);
+            world_maxs[a] = world_maxs[a].max(soup_max[a]);
+        }
     }
+    println!(
+        "IW4 adapter: kept {} soups, skipped {} extreme soups",
+        kept_soups.len(),
+        skipped_soups
+    );
+    let soups = kept_soups;
     // Small epsilon to avoid degenerate bounds.
     for a in 0..3 {
         if world_mins[a].is_finite() && world_maxs[a].is_finite() {
@@ -401,9 +589,7 @@ pub fn build_bsp(
 
     // Build white lightmaps so geometry is visible without real MW2 lightmaps.
     // A black lightmap would multiply the texture to zero (invisible).
-    let lightmaps: Vec<Vec<u8>> = (0..16)
-        .map(|_| vec![255u8; 512 * 512 * 3])
-        .collect();
+    let lightmaps: Vec<Vec<u8>> = (0..16).map(|_| vec![255u8; 512 * 512 * 3]).collect();
 
     Ok(Bsp {
         materials,

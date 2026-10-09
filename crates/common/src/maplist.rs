@@ -19,14 +19,12 @@ use crate::pk3::Pk3Fs;
 
 /// Maps that exist but must not appear in a player-facing list.
 ///
-/// Empty on purpose. `mp_toccoa` used to be here while its client visuals
-/// were broken (the map drew nothing, so offering it promised a grey void);
-/// that is fixed, and it is a real playable map now.
-///
 /// Re-add a map id here only while it is genuinely unplayable, and say what
 /// is broken in this comment -- the list is the single gate the selector, the
 /// rotation and a vote all read.
-const NOT_PLAYER_FACING: &[&str] = &[];
+/// `mp_toccoa` remains an explicitly launchable internal development map, but
+/// is not part of the player-facing alpha map set.
+const NOT_PLAYER_FACING: &[&str] = &["mp_toccoa"];
 
 /// The gametypes the player-facing menu offers, in the order they are shown.
 ///
@@ -433,9 +431,9 @@ const MAP_META: &[MapMeta] = &[
         gametypes: &["dm", "tdm"],
         recommended_players: "",
         tags: &["iw", "industrial", "close-quarters"],
-        // Verified: IW4 fastfile loader and adapter tested against real
-        // mp_rust.ff (235k verts, 580k indices, 5911 surfaces).
-        verified: true,
+        // Geometry, spawn and collision are verified. Keep this false until
+        // diffuse textures and readable lighting pass a human runtime check.
+        verified: false,
         playlist_tags: &["iw_classics"],
     },
 ];
@@ -765,15 +763,14 @@ mod tests {
         assert_eq!(display_name("mp_toccoa"), "Toccoa");
     }
 
-    /// The dev map is reachable again now that its client visuals work; the
-    /// gate still exists so a future broken map can be pulled without deleting
-    /// it. Regression for "mp_toccoa was excluded while unfinished".
+    /// The dev map stays launchable by id but is not offered by normal
+    /// player-facing selection, rotation, or voting.
     #[test]
-    fn the_dev_map_is_playable_once_its_visuals_work() {
+    fn the_dev_map_is_not_player_facing() {
         let r = MapRegistry::from_ids(&["mp_toccoa", "mp_carentan"]);
-        assert!(r.is_playable("mp_toccoa"));
+        assert!(!r.is_playable("mp_toccoa"));
         assert!(r.is_playable("mp_carentan"));
-        assert_eq!(r.len(), 2);
+        assert_eq!(r.len(), 1);
     }
 
     /// The gate itself still works, so re-adding an id really does hide it.

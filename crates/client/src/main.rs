@@ -884,7 +884,7 @@ fn main() -> Result<()> {
         );
     }
 
-    let fs = Pk3Fs::open_layered(&dir, args.overlay_dir.as_deref())
+    let mut fs = Pk3Fs::open_layered(&dir, args.overlay_dir.as_deref())
         .with_context(|| format!("cannot open game data in {}", dir.display()))?;
 
     if args.list {
@@ -914,7 +914,7 @@ fn main() -> Result<()> {
                 .exit();
         };
         // Try IW4 (MW2) maps first
-        if let Ok(Some(bsp)) = try_load_iw4_map(map, &fs) {
+        if let Some(bsp) = try_load_iw4_map(map, &mut fs)? {
             Some((map.to_string(), bsp))
         } else {
             let Some(path) = fs.resolve_map(map) else {
@@ -1178,8 +1178,8 @@ fn reopen_fs(
 
 /// Try to load an IW4 (MW2) map from the local install.
 /// Returns Ok(None) if this is not an IW4 map or no install is found.
-fn try_load_iw4_map(map: &str, _fs: &Pk3Fs) -> Result<Option<vcod_common::bsp::Bsp>> {
-    use iw4::{AssetSink, ClipMapGeometry, GfxWorldGeometry, MapEntsGeometry, ScriptStrings, ZoneMemory, ZoneStream, load_zone, open_zone};
+fn try_load_iw4_map(map: &str, fs: &mut Pk3Fs) -> Result<Option<vcod_common::bsp::Bsp>> {
+    use iw4::{load_zone, open_zone, ZoneMemory};
     use vcod_common::maplist::{find_mw2_install, iw4_map_available};
 
     let install = match find_mw2_install() {
@@ -1191,58 +1191,39 @@ fn try_load_iw4_map(map: &str, _fs: &Pk3Fs) -> Result<Option<vcod_common::bsp::B
         return Ok(None);
     }
 
-    let ff_path = install.join("zone").join("english").join(format!("{map}.ff"));
+    fs.mount_dir(&install.join("main"), "iwd")
+        .with_context(|| format!("cannot mount MW2 image archives from {}", install.display()))?;
+
+    let ff_path = install
+        .join("zone")
+        .join("english")
+        .join(format!("{map}.ff"));
     if !ff_path.exists() {
         return Ok(None);
     }
 
-    let zone = open_zone(&ff_path).map_err(|e| anyhow::anyhow!("cannot open {}: {e}", ff_path.display()))?;
-    let header = zone.header().map_err(|e| anyhow::anyhow!("cannot parse header: {e}"))?;
+    let zone = open_zone(&ff_path)
+        .map_err(|e| anyhow::anyhow!("cannot open {}: {e}", ff_path.display()))?;
+    let header = zone
+        .header()
+        .map_err(|e| anyhow::anyhow!("cannot parse header: {e}"))?;
 
     let mut memory = ZoneMemory::for_header(&header);
-    let mut stream = memory.stream(&zone.bytes).map_err(|e| anyhow::anyhow!("cannot create stream: {e:?}"))?;
+    let mut stream = memory
+        .stream(&zone.bytes)
+        .map_err(|e| anyhow::anyhow!("cannot create stream: {e:?}"))?;
 
-    // Capture GfxWorld, ClipMap, and MapEnts — the full world
-    struct WorldCapture {
-        gfx_world: Option<GfxWorldGeometry>,
-        clip_map: Option<ClipMapGeometry>,
-        map_ents: Option<MapEntsGeometry>,
-    }
-
-    impl AssetSink for WorldCapture {
-        fn set_script_strings(&mut self, _strings: ScriptStrings) {}
-        fn begin_assets(&mut self, _count: usize) {}
-        fn load_asset(
-            &mut self,
-            s: &mut ZoneStream<'_>,
-            _index: usize,
-            ty: iw4::AssetType,
-            slot: iw4::Ptr,
-        ) -> iw4::Result<()> {
-            iw4::load_asset_at(s, ty, slot)?;
-            if let Some(g) = s.gfx_world() {
-                self.gfx_world = Some(g);
-            }
-            if let Some(c) = s.clip_map() {
-                self.clip_map = Some(c);
-            }
-            if let Some(m) = s.map_ents() {
-                self.map_ents = Some(m);
-            }
-            Ok(())
-        }
-    }
-
-    let mut capture = WorldCapture {
-        gfx_world: None,
-        clip_map: None,
-        map_ents: None,
-    };
+    let mut capture = iw4::adapter::WorldCapture::default();
     load_zone(&mut stream, &mut capture).map_err(|e| anyhow::anyhow!("cannot load zone: {e:?}"))?;
 
     let gfx = match capture.gfx_world {
         Some(g) => g,
-        None => return Err(anyhow::anyhow!("no GfxWorld found in {}", ff_path.display())),
+        None => {
+            return Err(anyhow::anyhow!(
+                "no GfxWorld found in {}",
+                ff_path.display()
+            ))
+        }
     };
     let clip = match capture.clip_map {
         Some(c) => c,
@@ -1254,8 +1235,14 @@ fn try_load_iw4_map(map: &str, _fs: &Pk3Fs) -> Result<Option<vcod_common::bsp::B
     };
 
     // Use the full adapter conversion — the same path the adapter_test proves
-    let bsp = iw4::adapter::build_bsp(&stream, &gfx, &clip, &map_ents)
-        .map_err(|e| anyhow::anyhow!("cannot build Bsp from IW4 data: {e}"))?;
+    let bsp = iw4::adapter::build_bsp_with_materials(
+        &stream,
+        &gfx,
+        &clip,
+        &map_ents,
+        &capture.material_images,
+    )
+    .map_err(|e| anyhow::anyhow!("cannot build Bsp from IW4 data: {e}"))?;
 
     log::info!("iw4: loaded {} from {} ({} verts, {} indices, {} surfaces, {} planes, {} brushes, {} collision verts, {} entities)",
         map, ff_path.display(), bsp.verts.len(), bsp.indices.len(), bsp.soups.len(),

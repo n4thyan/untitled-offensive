@@ -75,48 +75,66 @@ impl Pk3Fs {
         Self::from_archives(archives)
     }
 
-    /// Index an already-collected archive list. Shared by [`Self::open`] and
-    /// [`Self::open_layered`]; the archive order IS the override order.
+    /// Mount every ZIP-compatible archive with `extension` from `dir`.
+    /// Later mounts override earlier entries, matching the engine's pak order.
+    pub fn mount_dir(&mut self, dir: &Path, extension: &str) -> Result<()> {
+        let mut archives: Vec<PathBuf> = std::fs::read_dir(dir)
+            .with_context(|| format!("cannot read archive dir {}", dir.display()))?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case(extension))
+            })
+            .collect();
+        archives.sort();
+        if archives.is_empty() {
+            bail!("no .{extension} archives found");
+        }
+        self.mount_archives(archives);
+        Ok(())
+    }
+
+    /// Index an already-collected archive list. Shared by constructors and
+    /// later mounts; the archive order IS the override order.
     fn from_archives(archives: Vec<PathBuf>) -> Result<Self> {
         if archives.is_empty() {
             bail!("no .pk3 archives found");
         }
-        let mut index = HashMap::new();
-        let mut alias_index = HashMap::new();
-        // A corrupt pak (a half-finished download is the usual one) is
-        // skipped so the rest still loads; archive indices count the readable ones.
-        let mut readable = Vec::with_capacity(archives.len());
+        let mut fs = Self::empty();
+        fs.mount_archives(archives);
+        if fs.archives.is_empty() {
+            bail!("no readable .pk3 archives");
+        }
+        Ok(fs)
+    }
+
+    fn mount_archives(&mut self, archives: Vec<PathBuf>) {
         for path in archives {
+            if self.archives.contains(&path) {
+                continue;
+            }
             let zip = std::fs::File::open(&path)
                 .map_err(anyhow::Error::from)
                 .and_then(|f| Ok(zip::ZipArchive::new(f)?));
             let zip = match zip {
                 Ok(z) => z,
                 Err(e) => {
-                    log::warn!("skipping unreadable pk3 {}: {e}", path.display());
+                    log::warn!("skipping unreadable archive {}: {e}", path.display());
                     continue;
                 }
             };
-            let i = readable.len();
+            let i = self.archives.len();
             for name in zip.file_names() {
                 let key = name.to_lowercase();
                 if key.contains('@') {
-                    alias_index.insert(key.replace('@', "_"), (i, name.to_string()));
+                    self.alias_index
+                        .insert(key.replace('@', "_"), (i, name.to_string()));
                 }
-                index.insert(key, (i, name.to_string()));
+                self.index.insert(key, (i, name.to_string()));
             }
-            readable.push(path);
+            self.archives.push(path);
         }
-        let archives = readable;
-        if archives.is_empty() {
-            bail!("no readable .pk3 archives");
-        }
-        Ok(Self {
-            archives,
-            index,
-            alias_index,
-            open: Mutex::new(HashMap::new()),
-        })
     }
 
     /// A filesystem with no archives; every lookup misses. For tests that
@@ -387,6 +405,24 @@ mod tests {
         std::fs::write(dir.path().join("pak0.pk3"), b"garbage").unwrap();
         assert!(Pk3Fs::open(dir.path()).is_err());
         assert!(Pk3Fs::open(&dir.path().join("missing")).is_err());
+    }
+
+    #[test]
+    fn mounts_iwd_archives_after_the_cod_filesystem_is_open() {
+        let cod = tempfile::tempdir().unwrap();
+        let mw2 = tempfile::tempdir().unwrap();
+        make_pk3(cod.path(), "pak0.pk3", &[("maps/mp/mp_test.bsp", "map")]);
+        make_pk3(
+            mw2.path(),
+            "iw_00.iwd",
+            &[("images/rust_col.iwi", "pixels")],
+        );
+
+        let mut fs = Pk3Fs::open(cod.path()).unwrap();
+        fs.mount_dir(mw2.path(), "iwd").unwrap();
+
+        assert_eq!(fs.read("maps/mp/mp_test.bsp").unwrap(), b"map");
+        assert_eq!(fs.read("images/rust_col.iwi").unwrap(), b"pixels");
     }
 
     #[test]

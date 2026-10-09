@@ -1,8 +1,53 @@
 # IW4 (MW2) material/texture chain — trace findings
 
-Session: short evening probe, mp_rust diffuse texture vertical slice.
-Status: **blocked at the GfxSurface record layout**. No texture rendered yet.
-Do not redo this trace; start from the open question at the bottom.
+Session: mp_rust diffuse texture vertical slice.
+Status: **surface/material/image association resolved, integrated, and human-verified in runtime**.
+
+## 2026-10-09 correction and implementation
+
+The prior "X64 layout blocker" diagnosis was wrong. `X64` is only the loader's
+name for the 8-byte-pointer wire variant; it does not imply a 64-bit game. The
+existing serialized layouts are correct: `Material` is 120 bytes,
+`MaterialTextureDef` is 16 bytes, and `GfxSurface` is 32 bytes with its material
+asset pointer at `+16`.
+
+The failed diagnostic confused XAsset pointer slots with temporary loaded
+bodies. Material bodies use the TEMP block and may be overwritten after their
+callback. Fresh nested references remain `Following`; reused references point
+to another XAsset slot. The durable identity is the `slot` supplied to
+`AssetLinkSink::loaded`/`alias`, not `latest_material.header` after zone load.
+
+A callback-time probe established:
+
+- 282 materials and 608 images observed;
+- 271 materials with texture tables, 750 texture definitions total;
+- all 750 non-water image references resolve to names;
+- all 5911 surface `+16` references resolve to 76 distinct materials;
+- semantic `2` is the diffuse/color image (for example
+  `plastic_case_big_green_us_dirt_col`).
+
+The runtime now captures image names by XAsset slot, resolves each material's
+semantic-2 image, maps each surface's `+16` target to that image, and emits BSP
+materials named `images/<gfx-image-name>`. MW2 `main/*.iwd` archives are mounted
+read-only into `Pk3Fs`; IWI v8 DXT1/3/5 payloads decode directly to the existing
+BC1/BC2/BC3 renderer image type without writing extracted DDS files.
+
+Human runtime verification passed on 2026-10-09: Rust is immediately
+recognizable, distinct ground/industrial/scaffolding textures are assigned to
+the appropriate surfaces, UVs are broadly correct, the fullbright fallback is
+readable, and geometry/collision/spawn remain intact. Some surfaces are still
+blown out or unresolved; this is tracked as shader/lightmap polish rather than
+a blocker for the playable material milestone. Runtime reported 45 textures
+loaded across 46 batches, with only `images/,shadow` missing.
+
+The IW4 vertex layout correction used for the playable fallback is: packed
+color at `16..20`, diffuse UV at `20/24`, lightmap UV at `28/32`, packed
+normal/tangent at `36..44`. Until real lightmaps are wired, neutral vertex color
+`[128,128,128,255]`, white lightmap page 0 and `lm_uv=[0,0]` produce readable
+fullbright output without changing the CoD1 renderer.
+
+The older blocker analysis below is retained as investigation history but is
+superseded by this correction.
 
 ## What is already proven (do not re-derive)
 

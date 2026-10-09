@@ -124,6 +124,49 @@ pub fn parse_dds(data: &[u8]) -> Result<Image> {
     }
 }
 
+/// Parse an IW4 IWI v8 2D DXT texture directly into the renderer's BC image form.
+pub fn parse_iwi(data: &[u8]) -> Result<Image> {
+    ensure!(data.len() >= 32 && &data[0..3] == b"IWi", "not an IWI file");
+    ensure!(data[3] == 8, "unsupported IWI version {}", data[3]);
+    let (format, block_size) = match data[8] {
+        11 => (TextureFormat::Bc1RgbaUnormSrgb, 8usize),
+        12 => (TextureFormat::Bc2RgbaUnormSrgb, 16usize),
+        13 => (TextureFormat::Bc3RgbaUnormSrgb, 16usize),
+        other => bail!("unsupported IWI format {other}"),
+    };
+    let width = u16::from_le_bytes(data[10..12].try_into().unwrap()) as u32;
+    let height = u16::from_le_bytes(data[12..14].try_into().unwrap()) as u32;
+    let depth = u16::from_le_bytes(data[14..16].try_into().unwrap());
+    ensure!(width > 0 && height > 0, "zero-sized IWI");
+    ensure!(depth == 1, "unsupported IWI depth {depth}");
+    ensure!(
+        width <= MAX_IMAGE_DIM && height <= MAX_IMAGE_DIM,
+        "IWI {width}x{height} exceeds {MAX_IMAGE_DIM}"
+    );
+
+    let one_mip = data[4] & 0x2 != 0;
+    let mut mips = Vec::new();
+    let mut off = 32usize;
+    let (mut w, mut h) = (width, height);
+    loop {
+        let size = w.div_ceil(4) as usize * h.div_ceil(4) as usize * block_size;
+        ensure!(off + size <= data.len(), "IWI truncated");
+        mips.push(data[off..off + size].to_vec());
+        off += size;
+        if one_mip || (w == 1 && h == 1) {
+            break;
+        }
+        w = (w / 2).max(1);
+        h = (h / 2).max(1);
+    }
+    ensure!(off == data.len(), "unsupported IWI payload layout");
+    Ok(Image {
+        width,
+        height,
+        data: ImageData::Bc { format, mips },
+    })
+}
+
 /// Retail's `*default`, bound for every material whose image cannot be found:
 /// 16x16 of RGBA (32, 32, 32, 32) inside a one-pixel opaque black border.
 /// From `R_CreateDefaultImage`, CoDMP.exe 1.1 @ 0x4f0380.
@@ -222,7 +265,7 @@ pub fn load_shaders(fs: &Pk3Fs) -> Shaders {
 }
 
 /// Probed in this order.
-pub const IMAGE_EXTS: [&str; 3] = [".dds", ".tga", ".jpg"];
+pub const IMAGE_EXTS: [&str; 4] = [".dds", ".iwi", ".tga", ".jpg"];
 
 /// First `base + ext` present in `fs`, without reading it.
 pub fn probe_image_path(fs: &Pk3Fs, base: &str) -> Option<String> {
@@ -273,6 +316,7 @@ fn decode_with_image(raw: &[u8], format: Option<image::ImageFormat>) -> Result<I
 fn decode_image(ext: &str, raw: &[u8]) -> Result<Image> {
     match ext {
         ".dds" => parse_dds(raw),
+        ".iwi" => parse_iwi(raw),
         ".tga" => decode_with_image(raw, Some(image::ImageFormat::Tga)),
         _ => decode_with_image(raw, None),
     }
@@ -1145,5 +1189,27 @@ gfx/effects/second_stage_only
             opaque_fraction("metal_masked@boucher_sign.tga") > 0.9,
             "expected the sign mask to be left alone"
         );
+    }
+
+    #[test]
+    fn parses_iwi_dxt1_mip_chain_without_a_dds_conversion() {
+        let mut raw = vec![0u8; 32];
+        raw[0..4].copy_from_slice(b"IWi\x08");
+        raw[4] = 2; // no mipmaps
+        raw[8] = 11;
+        raw[10..12].copy_from_slice(&4u16.to_le_bytes());
+        raw[12..14].copy_from_slice(&4u16.to_le_bytes());
+        raw[14..16].copy_from_slice(&1u16.to_le_bytes());
+        raw.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+
+        let image = parse_iwi(&raw).unwrap();
+        assert_eq!((image.width, image.height), (4, 4));
+        match image.data {
+            ImageData::Bc { format, mips } => {
+                assert_eq!(format, TextureFormat::Bc1RgbaUnormSrgb);
+                assert_eq!(mips, vec![vec![1, 2, 3, 4, 5, 6, 7, 8]]);
+            }
+            ImageData::Rgba8(_) => panic!("IWI DXT1 decoded as RGBA"),
+        }
     }
 }
