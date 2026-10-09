@@ -730,6 +730,7 @@ mod tests {
             collision: vcod_common::collision::ramp_test_world(10.0, 0.0, 512.0),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 64.0], 0.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         }));
         host.level_time_ms = 1_000;
         vm.with_cx(|cx| {
@@ -787,6 +788,7 @@ mod tests {
             collision: vcod_common::collision::test_world(&[]),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 64.0], 0.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         }));
         vm.with_cx(|cx| {
             let e = host.ents.spawn(cx).unwrap();
@@ -820,6 +822,7 @@ mod tests {
             )]),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 64.0], 0.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         }));
         vm.with_cx(|cx| {
             let e = host.ents.spawn(cx).unwrap();
@@ -848,6 +851,7 @@ mod tests {
             ),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 64.0], 0.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         }
     }
 

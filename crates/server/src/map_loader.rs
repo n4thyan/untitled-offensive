@@ -35,5 +35,8 @@ mod tests {
         let bsp = load(&Pk3Fs::empty(), "mp_rust").expect("server IW4 map load");
         assert!(!bsp.collision_indices.is_empty());
         assert!(bsp.entities.contains("mp_deathmatch_spawn"));
+        let spawn = vcod_common::bsp::find_spawn(&bsp.entities).expect("Rust player spawn");
+        let world = crate::world::World::from_bsp(&bsp, None);
+        assert_eq!(world.safe_player_spawn(spawn), Some(spawn));
     }
 }

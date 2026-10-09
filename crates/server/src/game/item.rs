@@ -543,6 +543,7 @@ mod tests {
             collision: vcod_common::collision::test_world(&[]),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 64.0], 0.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         }));
         let carbine = crate::configstrings::weapon_index("m1carbine_mp").unwrap() as u8;
         let d = Dropped {

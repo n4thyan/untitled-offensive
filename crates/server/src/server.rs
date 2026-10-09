@@ -3576,7 +3576,35 @@ impl Server {
             // because a spawn resets the whole playerstate and would wipe the
             // clip the same frame's `giveWeapon` just handed out.
             let mut spawned_into_play: Vec<usize> = Vec::new();
+            // Every stock player spawn reaches this queue through the script's
+            // `self spawn`, including bots; there is no separate bot picker.
             for s in rt.take_client_spawns() {
+                let (spawn_origin, spawn_yaw) = if s.mode == SpawnMode::Player {
+                    let safe = self.world.as_ref().map_or(Some((s.origin, s.yaw_deg)), |w| {
+                        w.safe_player_spawn((s.origin, s.yaw_deg))
+                    });
+                    let Some(safe) = safe else {
+                        log::warn!(
+                            "spawn: refused unsafe player spawn for slot {} at {:?}; no safe map spawn",
+                            s.slot,
+                            s.origin
+                        );
+                        continue;
+                    };
+                    if safe.0 != s.origin || safe.1 != s.yaw_deg {
+                        log::warn!(
+                            "spawn: slot {} requested unsafe {:?}; using map spawn {:?}",
+                            s.slot,
+                            s.origin,
+                            safe.0
+                        );
+                        rt.set_client_origin(s.slot, safe.0);
+                        rt.set_client_yaw(s.slot, safe.1);
+                    }
+                    safe
+                } else {
+                    (s.origin, s.yaw_deg)
+                };
                 let Some(c) = self.clients.get_mut(s.slot).and_then(Option::as_mut) else {
                     continue;
                 };
@@ -3605,7 +3633,7 @@ impl Server {
                 }
                 match s.mode {
                     SpawnMode::Player => {
-                        sim.become_player(s.origin, s.yaw_deg, cmd_angles);
+                        sim.become_player(spawn_origin, spawn_yaw, cmd_angles);
                         if let Some(w) = self.world.as_ref() {
                             sim.spawn_move(
                                 vcod_common::movetrace::MoveWorld::bare(&w.collision),
@@ -3631,7 +3659,7 @@ impl Server {
                         }
                     }
                     SpawnMode::Spectator => {
-                        sim.become_spectator(s.origin, s.yaw_deg, cmd_angles);
+                        sim.become_spectator(spawn_origin, spawn_yaw, cmd_angles);
                         if let Some(w) = self.world.as_ref() {
                             sim.spawn_move(
                                 vcod_common::movetrace::MoveWorld::bare(&w.collision),
@@ -3639,9 +3667,12 @@ impl Server {
                             );
                         }
                     }
-                    SpawnMode::Intermission => {
-                        sim.become_intermission(s.origin, s.yaw_deg, cmd_angles, self.sv_time_ms)
-                    }
+                    SpawnMode::Intermission => sim.become_intermission(
+                        spawn_origin,
+                        spawn_yaw,
+                        cmd_angles,
+                        self.sv_time_ms,
+                    ),
                 }
                 // The spawn's own think runs a player or a spectator up to
                 // the frame's clock; the intermission arm runs no pmove.
@@ -6366,6 +6397,7 @@ mod tests {
             collision: test_world(&[]),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 64.0], 0.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -6417,6 +6449,7 @@ mod tests {
             collision: test_world(&[]),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 64.0], 0.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         });
         let mut nc = begun(&mut sv, now);
 
@@ -6503,6 +6536,7 @@ mod tests {
             collision: test_world(&[]),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 64.0], 0.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         });
         install_script(
             &mut sv,
@@ -6679,6 +6713,7 @@ mod tests {
             collision: test_world(&[]),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 1.0], 0.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         });
         install_script(
             &mut sv,
@@ -6870,6 +6905,7 @@ mod tests {
             collision: test_world(&[]),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 64.0], 90.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         });
         let mut nc = active(&mut sv, now);
 
@@ -6916,6 +6952,7 @@ mod tests {
             collision: test_world(&[]),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 64.0], 0.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -6987,6 +7024,7 @@ mod tests {
             collision: test_world(&[]),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 64.0], 0.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -7047,6 +7085,7 @@ mod tests {
             collision: test_world(&[]),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 64.0], 0.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -7120,6 +7159,7 @@ mod tests {
             collision: test_world(&[]),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 64.0], 0.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -7189,6 +7229,7 @@ mod tests {
             collision: test_world(&[]),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 64.0], 0.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -7269,6 +7310,7 @@ mod tests {
             collision: test_world(&[]),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 64.0], 0.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -7345,6 +7387,7 @@ mod tests {
             collision: test_world(&[]),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 64.0], 0.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         });
         let mut nc = begun(&mut sv, now);
         let mut ring = SnapshotRing::new();
@@ -7459,6 +7502,7 @@ mod tests {
                 collision: test_world(&[]),
                 vis: vcod_common::bsp::Visibility::single_cluster(),
                 spawn: ([0.0, 0.0, 64.0], 0.0),
+                spawn_safety: crate::world::SpawnSafety::disabled(),
             });
             install_script(
                 &mut sv,

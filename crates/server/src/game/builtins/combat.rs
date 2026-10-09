@@ -962,6 +962,7 @@ mod tests {
             collision: vcod_common::collision::test_world(&[]),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 64.0], 0.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         }));
         for (slot, name) in [(0, "victim"), (1, "blocker")] {
             rt.push_client_event(ClientEvent::Connect {
@@ -1113,6 +1114,7 @@ mod tests {
             collision: vcod_common::collision::test_world(&[]),
             vis: vcod_common::bsp::Visibility::none(),
             spawn: ([0.0, 0.0, 64.0], 0.0),
+            spawn_safety: crate::world::SpawnSafety::disabled(),
         }));
         vm.with_cx(|cx| {
             let from = Value::Vector([0.0, 0.0, 100.0]);

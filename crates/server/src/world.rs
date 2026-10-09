@@ -1,10 +1,18 @@
 //! The map side of the server: collision for spectator flight and a spawn.
 
-use std::collections::{BTreeMap, HashMap};
+use glam::Vec3;
+use std::{
+    cell::Cell,
+    collections::{BTreeMap, HashMap},
+};
 use vcod_common::net::msg::EntityState;
 use vcod_common::net::protocol::{Protocol, ENTITYNUM_WORLD};
 use vcod_common::net::trajectory::TR_LINEAR;
-use vcod_common::{bsp, collision::CollisionWorld};
+use vcod_common::{
+    bsp,
+    collision::{CollisionWorld, CONTENTS_SOLID},
+    pmove,
+};
 
 pub struct World {
     pub collision: CollisionWorld,
@@ -12,6 +20,133 @@ pub struct World {
     pub vis: bsp::Visibility,
     /// Feet origin and yaw degrees, from the ents lump's spawn classes.
     pub spawn: ([f32; 3], f32),
+    pub(crate) spawn_safety: SpawnSafety,
+}
+
+const PLAYER_SPAWN_CLASSES: [&str; 5] = [
+    "mp_deathmatch_spawn",
+    "mp_teamdeathmatch_spawn",
+    "mp_dm_spawn",
+    "mp_tdm_spawn",
+    "info_player_start",
+];
+const MAX_FLOOR_DROP: f32 = 128.0;
+const MIN_FLOOR_NORMAL_Z: f32 = 0.7;
+const HULL_CLEARANCE: f32 = 0.125;
+
+#[derive(Debug)]
+pub(crate) struct SpawnSafety {
+    bounds: ([f32; 3], [f32; 3]),
+    candidates: Vec<([f32; 3], f32)>,
+    cursor: Cell<usize>,
+    enabled: bool,
+}
+
+impl SpawnSafety {
+    fn new(bounds: ([f32; 3], [f32; 3]), candidates: Vec<([f32; 3], f32)>) -> Self {
+        SpawnSafety {
+            bounds,
+            candidates,
+            cursor: Cell::new(0),
+            enabled: true,
+        }
+    }
+
+    pub(crate) fn disabled() -> Self {
+        SpawnSafety {
+            bounds: ([0.0; 3], [0.0; 3]),
+            candidates: Vec::new(),
+            cursor: Cell::new(0),
+            enabled: false,
+        }
+    }
+
+    fn select(
+        &self,
+        collision: &CollisionWorld,
+        requested: ([f32; 3], f32),
+    ) -> Option<([f32; 3], f32)> {
+        if !self.enabled || spawn_candidate_is_safe(collision, self.bounds, requested.0) {
+            return Some(requested);
+        }
+        let len = self.candidates.len();
+        for offset in 0..len {
+            let index = (self.cursor.get() + offset) % len;
+            let candidate = self.candidates[index];
+            if candidate.1.is_finite()
+                && spawn_candidate_is_safe(collision, self.bounds, candidate.0)
+            {
+                self.cursor.set((index + 1) % len);
+                return Some(candidate);
+            }
+        }
+        None
+    }
+}
+
+fn spawn_candidate_is_safe(
+    collision: &CollisionWorld,
+    bounds: ([f32; 3], [f32; 3]),
+    origin: [f32; 3],
+) -> bool {
+    let origin = Vec3::from(origin);
+    if !origin.is_finite() {
+        return false;
+    }
+    let lo = Vec3::from(bounds.0);
+    let hi = Vec3::from(bounds.1);
+    let player = pmove::PlayerState::spawn(Vec3::ZERO, 0.0);
+    let mins = player.mins();
+    let maxs = player.maxs();
+    if (origin + mins).cmplt(lo).any() || (origin + maxs).cmpgt(hi).any() {
+        return false;
+    }
+    // Pmove leaves grounded feet one trace backoff (0.125 units) above the
+    // floor. Test the same resting capsule so floor contact is not mistaken
+    // for an embedded hull.
+    let hull_origin = origin + Vec3::Z * HULL_CLEARANCE;
+    let hull = collision.box_trace(hull_origin, hull_origin, mins, maxs);
+    if hull.startsolid || hull.allsolid || hull.fraction < 1.0 {
+        return false;
+    }
+    let centre = origin + (mins + maxs) * 0.5;
+    if collision.point_contents(origin + Vec3::Z) & CONTENTS_SOLID != 0
+        || collision.point_contents(centre) & CONTENTS_SOLID != 0
+    {
+        return false;
+    }
+    let floor = collision.box_trace(
+        hull_origin,
+        hull_origin - Vec3::Z * (MAX_FLOOR_DROP + HULL_CLEARANCE),
+        mins,
+        maxs,
+    );
+    !floor.startsolid
+        && !floor.allsolid
+        && floor.fraction < 1.0
+        && floor.normal.z >= MIN_FLOOR_NORMAL_Z
+}
+
+fn player_spawn_candidates(entities: &str) -> Vec<([f32; 3], f32)> {
+    let blocks = bsp::entity_blocks(entities);
+    let mut out = Vec::new();
+    for class in PLAYER_SPAWN_CLASSES {
+        for block in &blocks {
+            if block.get("classname").map(String::as_str) != Some(class) {
+                continue;
+            }
+            let Some(origin) = block.get("origin").and_then(|v| bsp::parse_vec3(v)) else {
+                continue;
+            };
+            let yaw = block
+                .get("angles")
+                .and_then(|a| a.split_whitespace().nth(1))
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.0);
+            out.push((origin, yaw));
+        }
+    }
+    out
 }
 
 /// The unit the engine grows a linked entity's box by on each axis before
@@ -71,11 +206,25 @@ impl World {
         let spawn = bsp::find_spawn(&b.entities)
             // No spawn class in the ents: hover above the origin.
             .unwrap_or(([0.0, 0.0, 64.0], 0.0));
+        let spawn_safety = b
+            .models
+            .first()
+            .map_or_else(SpawnSafety::disabled, |model| {
+                SpawnSafety::new(
+                    (model.mins, model.maxs),
+                    player_spawn_candidates(&b.entities),
+                )
+            });
         World {
             collision,
             vis: b.visibility(),
             spawn,
+            spawn_safety,
         }
+    }
+
+    pub(crate) fn safe_player_spawn(&self, requested: ([f32; 3], f32)) -> Option<([f32; 3], f32)> {
+        self.spawn_safety.select(&self.collision, requested)
     }
 }
 
@@ -163,8 +312,123 @@ mod tests {
         };
         let parsed = bsp::parse(&data).unwrap();
         let w = World::from_bsp(&parsed, None);
-        // find_spawn picked a real spot, not bedrock.
+        // find_spawn picked a real, collision-safe spot, not bedrock.
         assert!(w.spawn.0[2] > -500.0, "spawn {:?}", w.spawn);
+        assert_eq!(w.safe_player_spawn(w.spawn), Some(w.spawn));
+    }
+
+    #[test]
+    fn every_stock_map_has_a_safe_player_spawn_fallback() {
+        let Some(fs) = vcod_common::testing::game_fs() else {
+            return;
+        };
+        for map in [
+            "mp_carentan",
+            "mp_dawnville",
+            "mp_brecourt",
+            "mp_pavlov",
+            "mp_rocket",
+            "mp_ship",
+            "mp_harbor",
+            "mp_hurtgen",
+            "mp_stalingrad",
+            "mp_tigertown",
+            "mp_powcamp",
+            "mp_bocage",
+            "mp_depot",
+            "mp_railyard",
+            "mp_neuville",
+            "mp_chateau",
+        ] {
+            let path = fs
+                .resolve_map(map)
+                .unwrap_or_else(|| panic!("missing {map}"));
+            let data = fs.read(&path).unwrap_or_else(|| panic!("read {map}"));
+            let parsed = bsp::parse(&data).unwrap_or_else(|e| panic!("parse {map}: {e}"));
+            let world = World::from_bsp(&parsed, None);
+            assert!(
+                world.spawn_safety.candidates.iter().any(|candidate| {
+                    candidate.1.is_finite()
+                        && spawn_candidate_is_safe(
+                            &world.collision,
+                            world.spawn_safety.bounds,
+                            candidate.0,
+                        )
+                }),
+                "{map} has no collision-safe player spawn"
+            );
+        }
+    }
+
+    #[test]
+    fn spawn_candidates_require_a_clear_supported_player_capsule_in_world() {
+        let collision = vcod_common::collision::test_world(&[(
+            glam::Vec3::new(80.0, -32.0, 0.0),
+            glam::Vec3::new(120.0, 32.0, 96.0),
+        )]);
+        let bounds = ([-1024.0, -1024.0, -16.0], [1024.0, 1024.0, 512.0]);
+
+        assert!(spawn_candidate_is_safe(&collision, bounds, [0.0, 0.0, 0.0]));
+        assert!(!spawn_candidate_is_safe(
+            &collision,
+            bounds,
+            [100.0, 0.0, 0.0]
+        ));
+        assert!(!spawn_candidate_is_safe(
+            &collision,
+            bounds,
+            [0.0, 0.0, -32.0]
+        ));
+        assert!(!spawn_candidate_is_safe(
+            &collision,
+            bounds,
+            [0.0, 0.0, 200.0]
+        ));
+        assert!(!spawn_candidate_is_safe(
+            &collision,
+            bounds,
+            [f32::NAN, 0.0, 0.0]
+        ));
+    }
+
+    #[test]
+    fn blocked_spawn_fallback_rotates_deterministically_over_map_entities() {
+        let collision = vcod_common::collision::test_world(&[(
+            glam::Vec3::new(80.0, -32.0, 0.0),
+            glam::Vec3::new(120.0, 32.0, 96.0),
+        )]);
+        let bounds = ([-1024.0, -1024.0, -16.0], [1024.0, 1024.0, 512.0]);
+        let safety = SpawnSafety::new(
+            bounds,
+            vec![
+                ([100.0, 0.0, 0.0], 10.0),
+                ([0.0, 0.0, 0.0], 20.0),
+                ([200.0, 0.0, 0.0], 30.0),
+            ],
+        );
+
+        assert_eq!(
+            safety.select(&collision, ([100.0, 0.0, 0.0], 90.0)),
+            Some(([0.0, 0.0, 0.0], 20.0))
+        );
+        assert_eq!(
+            safety.select(&collision, ([100.0, 0.0, 0.0], 90.0)),
+            Some(([200.0, 0.0, 0.0], 30.0))
+        );
+    }
+
+    #[test]
+    fn a_clear_requested_spawn_is_preserved_and_no_safe_fallback_is_refused() {
+        let collision = vcod_common::collision::test_world(&[(
+            glam::Vec3::new(80.0, -32.0, 0.0),
+            glam::Vec3::new(120.0, 32.0, 96.0),
+        )]);
+        let bounds = ([-1024.0, -1024.0, -16.0], [1024.0, 1024.0, 512.0]);
+        let requested = ([0.0, 0.0, 0.0], 47.0);
+        let safety = SpawnSafety::new(bounds, vec![([100.0, 0.0, 0.0], 10.0)]);
+
+        assert_eq!(safety.select(&collision, requested), Some(requested));
+        assert_eq!(safety.select(&collision, ([100.0, 0.0, 0.0], 90.0)), None);
     }
 
     #[test]

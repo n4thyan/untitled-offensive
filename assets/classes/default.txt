@@ -10,20 +10,44 @@
 
 profile Default
 
-class Rifleman
+class US Rifleman
 primary m1garand_mp
 secondary colt_mp
 equipment fraggrenade_mp
 perk1 perk_stopping_power
 
-class Assault
+class US Assault
 primary thompson_mp
 secondary colt_mp
 equipment fraggrenade_mp
 perk1 perk_sleight_of_hand
 
-class Support
+class US Support
 primary bar_mp
 secondary colt_mp
 equipment fraggrenade_mp
-perk1 perk_juggernaut
+perk1 perk_bandolier
+
+class German Rifleman
+primary kar98k_mp
+secondary luger_mp
+equipment stielhandgranate_mp
+perk1 perk_steady_aim
+
+class German Assault
+primary mp40_mp
+secondary luger_mp
+equipment stielhandgranate_mp
+perk1 perk_double_tap
+
+class British Rifleman
+primary enfield_mp
+secondary colt_mp
+equipment mk1britishfrag_mp
+perk1 perk_deep_impact
+
+class Soviet Assault
+primary ppsh_mp
+secondary colt_mp
+equipment rgd-33russianfrag_mp
+perk1 perk_extended_mags

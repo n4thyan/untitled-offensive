@@ -505,10 +505,44 @@ mod tests {
             "m1carbine_mp",
             "m1garand_mp",
             "thompson_mp",
+            "bar_mp",
+            "kar98k_mp",
+            "mp40_mp",
+            "enfield_mp",
+            "sten_mp",
+            "mosin_nagant_mp",
+            "ppsh_mp",
             "colt_mp",
+            "luger_mp",
             "fraggrenade_mp",
+            "stielhandgranate_mp",
+            "mk1britishfrag_mp",
+            "rgd-33russianfrag_mp",
         ]);
         let classes = Classes::new(None);
+        assert_eq!(classes.default_profile().classes.len(), 7);
+        for class in &classes.default_profile().classes {
+            let loadout = resolve(class, &|w| {
+                crate::configstrings::weapon_index(w).is_some_and(|i| t.get(i).is_some())
+            });
+            assert!(
+                loadout.problems.is_empty(),
+                "{}: {:?}",
+                class.name,
+                loadout.problems
+            );
+            assert!(loadout.primary.is_some(), "{} has no primary", class.name);
+            assert!(
+                loadout.secondary.is_some(),
+                "{} has no secondary",
+                class.name
+            );
+            assert!(
+                loadout.equipment.is_some(),
+                "{} has no equipment",
+                class.name
+            );
+        }
         let l = classes
             .loadout_for("anyone", &t, None)
             .expect("default resolves");
