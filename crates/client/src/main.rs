@@ -2259,7 +2259,7 @@ impl ApplicationHandler for App {
                         KeyCode::KeyZ if pressed => input.prone = !input.prone,
                         KeyCode::KeyQ => input.lean_left = pressed,
                         KeyCode::KeyE => input.lean_right = pressed,
-                        KeyCode::ShiftLeft => input.walk_slow = pressed,
+                        KeyCode::ShiftLeft | KeyCode::ShiftRight => input.sprint = pressed,
                         _ => {
                             if pressed && grabbed {
                                 if let Some(slot) = digit_slot(code) {
@@ -2945,6 +2945,12 @@ impl ApplicationHandler for App {
                                             self.viewmodel = models;
                                         }
                                     }
+                                    view.sprint(
+                                        !following
+                                            && ps_client == client_num
+                                            && pmove::predict::predictable(pm_type)
+                                            && input.is_down(play::input::Action::Sprint),
+                                    );
                                     let (vm_draw, fov) =
                                         view.frame(weapons, view_ps.as_ref(), dt, local_ms);
                                     vm = vm_draw;
@@ -3275,6 +3281,7 @@ impl ApplicationHandler for App {
                         let mut bone_sets = Vec::new();
                         let mut fov = camera::DEFAULT_FOV_DEG;
                         let mut damp = 1.0;
+                        let mut sprint_anim = weapon::WeaponAnim::Idle;
                         if let Some(w) = view_weapon {
                             let out = w.state.update(
                                 dt,
@@ -3285,6 +3292,7 @@ impl ApplicationHandler for App {
                                     reload: *reload_edge,
                                 },
                             );
+                            sprint_anim = out.anim;
                             w.pose_sight(out.ads_frac, *ads_held);
                             let clip = w
                                 .anims
@@ -3406,6 +3414,17 @@ impl ApplicationHandler for App {
                         }
                         *fire_edge = false;
                         *reload_edge = false;
+
+                        motion.update_sprint(
+                            dt,
+                            viewmodel::SprintPoseInput {
+                                requested: input.sprint,
+                                moving: ground_speed > 1.0,
+                                on_ground: ps.on_ground,
+                                ads_frac: if *ads_held { 1.0 } else { 0.0 },
+                                weapon_anim: sprint_anim,
+                            },
+                        );
 
                         motion.update(
                             dt,

@@ -165,6 +165,10 @@ pub struct PlayInput {
 }
 
 impl PlayInput {
+    pub fn is_down(&self, action: Action) -> bool {
+        self.down.contains(&action)
+    }
+
     pub fn key(&mut self, action: Action, pressed: bool) {
         let was_down = self.down.contains(&action);
         if pressed {

@@ -152,6 +152,79 @@ const BOB_ATTACK: f32 = 8.0; // 1/s, amplitude lerp rate
 const SWAY_SCALE: f32 = 0.0015; // units per mouse count
 const SWAY_MAX: f32 = 0.6; // clamp, view-space units
 const SWAY_DECAY: f32 = 6.0; // 1/s exponential return
+const SPRINT_LOWER: f32 = 2.0;
+const SPRINT_SIDE: f32 = 0.45;
+const SPRINT_ROLL_DEG: f32 = 6.0;
+const SPRINT_YAW_DEG: f32 = 2.0;
+const SPRINT_BOB: f32 = 0.12;
+const SPRINT_BLEND_IN: f32 = 10.0;
+const SPRINT_BLEND_OUT: f32 = 14.0;
+const SPRINT_BOB_HZ: f32 = 1.35;
+
+#[derive(Clone, Copy, Debug)]
+pub struct SprintPoseInput {
+    pub requested: bool,
+    pub moving: bool,
+    pub on_ground: bool,
+    pub ads_frac: f32,
+    pub weapon_anim: weapon::WeaponAnim,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SprintPoseSample {
+    pub blend: f32,
+    pub offset: Vec3,
+    pub roll_deg: f32,
+    pub bob: Vec2,
+}
+
+#[derive(Default)]
+pub struct SprintPose {
+    blend: f32,
+    phase: f32,
+}
+
+impl SprintPose {
+    pub fn update(&mut self, dt: f32, input: SprintPoseInput) {
+        let idle = matches!(
+            input.weapon_anim,
+            weapon::WeaponAnim::Idle | weapon::WeaponAnim::EmptyIdle
+        );
+        let active =
+            input.requested && input.moving && input.on_ground && input.ads_frac <= 0.001 && idle;
+        let target = if active { 1.0 } else { 0.0 };
+        let rate = if active {
+            SPRINT_BLEND_IN
+        } else {
+            SPRINT_BLEND_OUT
+        };
+        self.blend += (target - self.blend) * (1.0 - (-rate * dt.max(0.0)).exp());
+        if (self.blend - target).abs() < 0.0001 {
+            self.blend = target;
+        }
+        if active {
+            self.phase = (self.phase + dt.max(0.0) * std::f32::consts::TAU * SPRINT_BOB_HZ)
+                % std::f32::consts::TAU;
+        }
+    }
+
+    pub fn sample(&self) -> SprintPoseSample {
+        let bob = Vec2::new(self.phase.sin(), (self.phase * 2.0).sin()) * (SPRINT_BOB * self.blend);
+        SprintPoseSample {
+            blend: self.blend,
+            offset: Vec3::new(SPRINT_SIDE * self.blend, -SPRINT_LOWER * self.blend, 0.0),
+            roll_deg: SPRINT_ROLL_DEG * self.blend,
+            bob,
+        }
+    }
+
+    fn transform(&self) -> Mat4 {
+        let p = self.sample();
+        Mat4::from_translation(p.offset + Vec3::new(p.bob.x, p.bob.y, 0.0))
+            * Mat4::from_rotation_z(p.roll_deg.to_radians())
+            * Mat4::from_rotation_y((SPRINT_YAW_DEG * p.blend).to_radians())
+    }
+}
 
 /// Walk bob cycle and mouse sway spring; `transform` is the view-space model
 /// matrix.
@@ -159,6 +232,7 @@ pub struct ViewmodelMotion {
     phase: f32,
     amp: f32,
     sway: Vec2,
+    sprint: SprintPose,
 }
 
 impl ViewmodelMotion {
@@ -167,6 +241,7 @@ impl ViewmodelMotion {
             phase: 0.0,
             amp: 0.0,
             sway: Vec2::ZERO,
+            sprint: SprintPose::default(),
         }
     }
 
@@ -197,6 +272,10 @@ impl ViewmodelMotion {
         self.sway *= (-SWAY_DECAY * dt).exp();
     }
 
+    pub fn update_sprint(&mut self, dt: f32, input: SprintPoseInput) {
+        self.sprint.update(dt, input);
+    }
+
     pub fn transform(&self) -> Mat4 {
         let bob = Vec3::new(
             self.phase.sin() * BOB_LATERAL * self.amp,
@@ -207,7 +286,8 @@ impl ViewmodelMotion {
         // The gun lags the turn: mouse right drifts it left, mouse down up.
         let sway_offset = Vec3::new(-self.sway.x, self.sway.y, 0.0);
 
-        Mat4::from_translation(OFFSET_POS + bob + sway_offset)
+        self.sprint.transform()
+            * Mat4::from_translation(OFFSET_POS + bob + sway_offset)
             * Mat4::from_rotation_y(OFFSET_YAW_DEG.to_radians())
             * Mat4::from_rotation_z(roll)
             * BASIS
@@ -413,6 +493,105 @@ mod tests {
             down.transform().w_axis.y > OFFSET_POS.y,
             "mouse down must sway the gun toward view +y"
         );
+    }
+
+    #[test]
+    fn sprint_pose_enters_smoothly_and_stays_restrained() {
+        let mut pose = SprintPose::default();
+        let active = SprintPoseInput {
+            requested: true,
+            moving: true,
+            on_ground: true,
+            ads_frac: 0.0,
+            weapon_anim: weapon::WeaponAnim::Idle,
+        };
+
+        pose.update(0.016, active);
+        let first = pose.sample();
+        assert!(
+            first.blend > 0.0 && first.blend < 1.0,
+            "first frame must interpolate"
+        );
+        assert!(first.offset.y < 0.0, "the weapon lowers in view space");
+        assert!(
+            first.roll_deg.abs() > 0.0,
+            "the weapon rotates slightly aside"
+        );
+
+        for _ in 0..120 {
+            pose.update(0.016, active);
+        }
+        let settled = pose.sample();
+        assert!(settled.blend > 0.99);
+        assert!(
+            settled.offset.y >= -2.5,
+            "lowering remains restrained: {settled:?}"
+        );
+        assert!(
+            settled.roll_deg.abs() <= 8.0,
+            "rotation remains restrained: {settled:?}"
+        );
+        assert!(
+            settled.bob.length() <= 0.2,
+            "sprint bob remains restrained: {settled:?}"
+        );
+    }
+
+    #[test]
+    fn sprint_pose_recovers_after_every_weapon_interruption() {
+        let active = SprintPoseInput {
+            requested: true,
+            moving: true,
+            on_ground: true,
+            ads_frac: 0.0,
+            weapon_anim: weapon::WeaponAnim::Idle,
+        };
+        for interruption in [
+            SprintPoseInput {
+                ads_frac: 0.2,
+                ..active
+            },
+            SprintPoseInput {
+                weapon_anim: weapon::WeaponAnim::Fire,
+                ..active
+            },
+            SprintPoseInput {
+                weapon_anim: weapon::WeaponAnim::Reload,
+                ..active
+            },
+            SprintPoseInput {
+                weapon_anim: weapon::WeaponAnim::Melee,
+                ..active
+            },
+            SprintPoseInput {
+                requested: false,
+                ..active
+            },
+        ] {
+            let mut pose = SprintPose::default();
+            for _ in 0..60 {
+                pose.update(0.016, active);
+            }
+            let sprinted = pose.sample().blend;
+            pose.update(0.016, interruption);
+            let interrupted = pose.sample().blend;
+            assert!(
+                interrupted < sprinted && interrupted > 0.0,
+                "interruption must recover smoothly"
+            );
+            for _ in 0..90 {
+                pose.update(0.016, interruption);
+            }
+            assert!(
+                pose.sample().blend < 0.001,
+                "interruption must reach neutral"
+            );
+            pose.update(0.016, active);
+            assert!(
+                pose.sample().blend > 0.0,
+                "held sprint resumes when the interruption ends"
+            );
+        }
     }
 
     #[test]

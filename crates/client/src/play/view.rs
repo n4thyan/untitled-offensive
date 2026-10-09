@@ -5,11 +5,11 @@ use crate::renderer::VmDraw;
 use crate::viewmodel::{self, ViewWeapon, ViewmodelMotion};
 use glam::Vec3;
 use vcod_common::net::msg;
-use vcod_common::net::protocol::{Protocol, CS_MODELS_V1, ENTITYNUM_NONE};
+use vcod_common::net::protocol::{CS_MODELS_V1, ENTITYNUM_NONE, Protocol};
 use vcod_common::pk3::Pk3Fs;
 use vcod_common::pmove::predict::Predicted;
 use vcod_common::pmove::weapon::NUM_AMMO;
-use vcod_common::weapon::{self, SightDirection, ViewAnimClock, WeaponAnim, WeaponDef, CG_FOV};
+use vcod_common::weapon::{self, CG_FOV, SightDirection, ViewAnimClock, WeaponAnim, WeaponDef};
 use vcod_common::xmodel::XModel;
 
 /// The playerstate fields the viewmodel reads, from the prediction when there
@@ -131,12 +131,17 @@ pub struct OnlineView {
     sight: SightDirection,
     motion: ViewmodelMotion,
     mouse: (f32, f32),
+    sprint_requested: bool,
     /// `tag_flash` as last drawn, view space (X right, Y up, -Z forward):
     /// position and the tag's forward.
     flash: Option<(Vec3, Vec3)>,
 }
 
 impl OnlineView {
+    pub fn sprint(&mut self, requested: bool) {
+        self.sprint_requested = requested;
+    }
+
     /// Raw counts, drained into the sway once per frame.
     pub fn mouse(&mut self, dx: f32, dy: f32) {
         self.mouse.0 += dx;
@@ -207,6 +212,16 @@ impl OnlineView {
             // still restarts the raise.
             self.clock = ViewAnimClock::default();
             self.trend = 0;
+            self.motion.update_sprint(
+                dt,
+                viewmodel::SprintPoseInput {
+                    requested: false,
+                    moving: false,
+                    on_ground: false,
+                    ads_frac: 0.0,
+                    weapon_anim: WeaponAnim::Idle,
+                },
+            );
             return (None, fov);
         };
         let clip_empty = held.is_some_and(|d| ps.ammoclip.get(d.clip_index) == Some(&0));
@@ -242,6 +257,16 @@ impl OnlineView {
         } else {
             0.0
         };
+        self.motion.update_sprint(
+            dt,
+            viewmodel::SprintPoseInput {
+                requested: self.sprint_requested,
+                moving: ground_speed > 1.0,
+                on_ground: ps.on_ground,
+                ads_frac: frac,
+                weapon_anim: anim,
+            },
+        );
         self.motion
             .update(dt, ground_speed, ps.on_ground, mouse.0, mouse.1, damp);
         let transform = self.motion.transform();

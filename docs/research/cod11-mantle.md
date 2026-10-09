@@ -1452,3 +1452,29 @@ Status after the pmove work landed on this branch:
    ledge-climbing is wanted as a feature it would be a vcod extension with
    no retail counterpart - decide its constants, don't dig for them in the
    binary.
+
+## Static-geometry mantle extension assessment
+
+A CoD2-style mantle is **deferred**. Static obstacle, overhead-clearance and
+landing-hull probes are contained: every supported map source is normalized to
+`bsp::Bsp`, then both the server and predictor build the same
+`CollisionWorld`/`MoveWorld`. CoD1 stock and community IBSP maps and IW4 native
+maps therefore need no map-specific mantle path.
+
+The bounded transition is not contained. It needs persistent state for at least
+the transition phase, start/end (or a reproducible ledge target), and elapsed
+time. The server can retain that state in `ClientSim`, but a predicting client is
+rebuilt from each authoritative wire playerstate by `pmove::predict::from_wire`.
+CoD 1.1's playerstate has no mantle flag, target or clock, and its existing
+`pm_flags`, `pm_time`, jump and link fields already have retail meanings. After
+a snapshot correction or dropped command the client therefore cannot reconstruct
+which interpolation the server is in; re-running ledge detection at the corrected
+origin can select a different ledge or fail after the hull has moved above the
+obstacle. Encoding the state in an existing retail field would also make stock
+clients mispredict that field's original mechanic.
+
+Authoritative/predicted agreement for a multi-frame up/forward transition thus
+requires either new negotiated playerstate fields (and protocol versioning) or a
+new deterministic movement mode with equivalent serialized state. That is a
+protocol/prediction redesign, outside a timeboxed shared-pmove addition. No
+mantle code or input bit is added here.
