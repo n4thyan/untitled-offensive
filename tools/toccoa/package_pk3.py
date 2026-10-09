@@ -23,13 +23,14 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 
 BSP_SRC = os.path.join(HERE, "out.bsp")
 SCRIPT_SRC = os.path.join(ROOT, "assets", "scripts", "mp_toccoa.gsc")
+RUST_SCRIPT_SRC = os.path.join(ROOT, "assets", "scripts", "mp_rust.gsc")
 # The overlay directory the engine searches before the retail `main`.
 MOD_DIR = os.path.join(ROOT, "main-untitled")
 PK3_PATH = os.path.join(MOD_DIR, "untitled.pk3")
 
 
 def main():
-    missing = [p for p in (BSP_SRC, SCRIPT_SRC) if not os.path.exists(p)]
+    missing = [p for p in (BSP_SRC, SCRIPT_SRC, RUST_SCRIPT_SRC) if not os.path.exists(p)]
     if missing:
         for p in missing:
             print(f"missing {p}")
@@ -44,6 +45,7 @@ def main():
         # loader and the map-cycle logic find these with no special cases.
         z.write(BSP_SRC, "maps/MP/mp_toccoa.bsp")
         z.write(SCRIPT_SRC, "maps/MP/mp_toccoa.gsc")
+        z.write(RUST_SCRIPT_SRC, "maps/MP/mp_rust.gsc")
 
     print(f"wrote {PK3_PATH} ({os.path.getsize(PK3_PATH)} bytes)")
     with zipfile.ZipFile(PK3_PATH) as z:

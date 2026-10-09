@@ -403,6 +403,7 @@ fn probe_bootstrap_matches_retail() {
             text,
         }),
         fs,
+        None,
         "mp_pavlov",
         "probe_bootstrap",
         vec![String::new(); 2048],

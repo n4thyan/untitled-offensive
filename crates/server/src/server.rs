@@ -832,6 +832,10 @@ pub struct Server {
     /// without. `Rc` so `GameHost.world` can point at the same map for
     /// `bulletTrace`, which needs real geometry to trace against.
     world: Option<Rc<World>>,
+    /// Entity/model data used by the script bootstrap. Imported maps populate
+    /// this from the same normalized BSP as `world`, avoiding a second IBSP
+    /// lookup that cannot succeed for fastfile-backed maps.
+    script_map: Option<Rc<crate::game::script::ScriptMapData>>,
     /// `svs.time`, advanced one frame per tick.
     sv_time_ms: i32,
     /// Gamestate entity baselines a delta frame may omit an unchanged entity
@@ -1035,6 +1039,15 @@ fn write_pending_commands(w: &mut MsgWriter, nc: &ServerNetchan, from_ack: i32) 
     }
 }
 
+fn discover_server_registry(
+    fs: &vcod_common::pk3::Pk3Fs,
+    iw4_available: impl Fn(&str) -> bool,
+) -> MapRegistry {
+    let mut registry = MapRegistry::discover(fs);
+    registry.include_iw4(iw4_available);
+    registry
+}
+
 impl Server {
     pub fn new(mut cfg: ServerConfig, now: Instant) -> Self {
         cfg.max_clients = cfg.max_clients.min(MAX_CLIENTS);
@@ -1057,6 +1070,7 @@ impl Server {
             limiter: RateLimiter::new(now),
             rng: seed,
             world: None,
+            script_map: None,
             sv_time_ms: 0,
             baselines: HashMap::new(),
             test_entities: None,
@@ -2526,6 +2540,16 @@ impl Server {
         self.world = Some(Rc::new(world));
     }
 
+    /// Install collision and script-facing map data from one normalized BSP.
+    pub fn load_bsp(
+        &mut self,
+        bsp: &vcod_common::bsp::Bsp,
+        fs: Option<&vcod_common::pk3::Pk3Fs>,
+    ) {
+        self.world = Some(Rc::new(World::from_bsp(bsp, fs)));
+        self.script_map = Some(Rc::new(crate::game::script::ScriptMapData::from_bsp(bsp)));
+    }
+
     /// The cvar table a gametype script starts with: the engine defaults,
     /// then `default_mp.cfg`, then `g_gametype`, `sv_hostname` and
     /// `sv_maxclients` mirroring this run's `ServerConfig`, and `debug` at
@@ -2655,9 +2679,15 @@ impl Server {
             self.weapon_table = Rc::new(crate::weapons::WeaponTable::load(&fs));
             self.hitlocs = crate::game::combat::HitLocTable::load(&fs);
             // The paks are mounted now, so the map registry a vote draws from
-            // can be discovered. Later-engine maps are added by the binary,
-            // which knows the local install; the server only reads the paks.
-            self.registry = MapRegistry::discover(&fs);
+            // can be discovered. Native IW4 maps join that same registry when
+            // their source install is available; votes and rotation must see
+            // the same set as the client Play screen.
+            let iw4_install = vcod_common::maplist::find_mw2_install();
+            self.registry = discover_server_registry(&fs, |map| {
+                iw4_install
+                    .as_ref()
+                    .is_some_and(|install| vcod_common::maplist::iw4_map_available(install, map))
+            });
         }
         // `game[]` and `pers[]` are the script's and go only under
         // `savePersist`; the item registry is the engine's and survives a
@@ -2673,6 +2703,7 @@ impl Server {
         let mut rt = crate::game::script::ScriptRuntime::load_from(
             Box::new(source),
             fs,
+            self.script_map.as_deref(),
             &self.cfg.map,
             &self.cfg.gametype,
             self.configstrings.clone(),
@@ -2799,13 +2830,7 @@ impl Server {
             .clone()
             .ok_or_else(|| kept(anyhow::anyhow!("no paks are mounted")))?;
         // Step 15's `CM_LoadMap`, pulled ahead of the teardown.
-        let bsp_path = fs
-            .resolve_map(map)
-            .ok_or_else(|| kept(anyhow::anyhow!("map {map} not found in the mounted paks")))?;
-        let bsp_bytes = fs
-            .read(&bsp_path)
-            .ok_or_else(|| kept(anyhow::anyhow!("reading {bsp_path}")))?;
-        let bsp = vcod_common::bsp::parse(&bsp_bytes).map_err(kept)?;
+        let bsp = crate::map_loader::load(&fs, map).map_err(kept)?;
 
         // Step 2: the flag is read off the outgoing level and handed to the
         // incoming one's `G_InitGame`, along with the two tables it decides
@@ -2836,7 +2861,7 @@ impl Server {
         self.snap_flag_server_bit ^= console::SNAPFLAG_SERVERCOUNT;
         // Step 15's `Cvar_Set("mapname", ...)` and the collision with it.
         self.cfg.map = map.to_string();
-        self.load_world(World::from_bsp(&bsp, Some(&fs)));
+        self.load_bsp(&bsp, Some(&fs));
         // Step 16, then steps 7 and 10 with step 24 folded in: the table is
         // rebuilt empty around the serverinfo and systeminfo the new id
         // belongs in, which is where the client reads the id back from.
@@ -4998,6 +5023,18 @@ mod tests {
             bots_shoot: false,
         }
     }
+    #[test]
+    fn server_registry_includes_available_iw4_maps() {
+        let registry = discover_server_registry(&vcod_common::pk3::Pk3Fs::empty(), |id| {
+            id == "mp_rust"
+        });
+        assert!(registry.is_playable("mp_rust"));
+        assert_eq!(
+            registry.get("mp_rust").map(|m| m.source_type),
+            Some(vcod_common::maplist::SourceType::Iw4Native)
+        );
+    }
+
     fn addr(port: u16) -> SocketAddr {
         SocketAddr::from(([127, 0, 0, 1], port))
     }

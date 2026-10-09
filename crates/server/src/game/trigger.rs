@@ -259,6 +259,7 @@ pub(crate) const TOUCH_BOX: [f32; 3] = [40.0, 40.0, 52.0];
 /// the entity's current origin is applied at test time, so a relocated
 /// trigger takes its brushes with it. Point p is inside iff n·p <= d for
 /// every plane.
+#[derive(Clone)]
 pub struct BrushHull {
     pub planes: Vec<(Vec3, f32)>,
 }

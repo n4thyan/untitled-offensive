@@ -104,6 +104,22 @@ fn mp_rust_loads_and_converts_to_bsp() {
     assert!(!bsp.entities.is_empty(), "Bsp has no entities");
     assert!(!bsp.models.is_empty(), "Bsp has no models");
     assert!(
+        bsp.entities.contains("mp_deathmatch_spawn"),
+        "IW4 deathmatch spawns were not normalized for CoD1 scripts"
+    );
+    assert!(
+        bsp.entities.contains("mp_teamdeathmatch_spawn"),
+        "IW4 team-deathmatch spawns were not normalized for CoD1 scripts"
+    );
+    assert!(
+        bsp.entities.contains("mp_deathmatch_intermission"),
+        "IW4 intermission was not normalized for CoD1 deathmatch"
+    );
+    assert!(
+        bsp.entities.contains("mp_teamdeathmatch_intermission"),
+        "IW4 intermission was not normalized for CoD1 team deathmatch"
+    );
+    assert!(
         bsp.verts.iter().all(|v| v.color == [128, 128, 128, 255]),
         "IW4 fullbright fallback must use neutral vertex colors"
     );
@@ -137,4 +153,20 @@ fn mp_rust_loads_and_converts_to_bsp() {
         bsp.collision_verts.len(),
         bsp.collision_indices.len()
     );
+}
+
+#[test]
+fn shared_loader_returns_normalized_mp_rust() {
+    let Some(ff) = find_mp_rust() else {
+        eprintln!("skipping: mp_rust.ff not found");
+        return;
+    };
+    let install = ff.parent().unwrap().parent().unwrap().parent().unwrap();
+    let bsp = iw4::load_map_from_install(install, "mp_rust")
+        .expect("shared IW4 loader failed")
+        .expect("shared IW4 loader did not recognize mp_rust");
+
+    assert!(!bsp.soups.is_empty());
+    assert!(!bsp.collision_indices.is_empty());
+    assert!(bsp.entities.contains("mp_deathmatch_spawn"));
 }

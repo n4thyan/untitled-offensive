@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "MW2/IW4 fastfile loading and world geometry extraction"
 
 [dependencies]
+anyhow.workspace = true
 vcod-common = { path = "../common" }
 asset_iw4 = { path = "../asset_iw4" }
 flate2 = "1.0"

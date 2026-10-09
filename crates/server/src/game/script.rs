@@ -125,6 +125,26 @@ pub struct ScriptRuntime {
     rng: u64,
 }
 
+/// Map data the script bootstrap needs independently of render geometry.
+/// Imported maps provide this from their normalized BSP, while legacy callers
+/// can continue letting `load_from` read the BSP from the mounted paks.
+#[derive(Clone)]
+pub struct ScriptMapData {
+    entities: String,
+    model_bounds: Vec<([f32; 3], [f32; 3])>,
+    model_brushes: Vec<Vec<crate::game::trigger::BrushHull>>,
+}
+
+impl ScriptMapData {
+    pub fn from_bsp(bsp: &vcod_common::bsp::Bsp) -> Self {
+        Self {
+            entities: bsp.entities.clone(),
+            model_bounds: bsp.models.iter().map(|m| (m.mins, m.maxs)).collect(),
+            model_brushes: crate::game::trigger::model_brush_hulls(bsp),
+        }
+    }
+}
+
 impl ScriptRuntime {
     /// Loads the gametype and map script closures, spawns the map's entities
     /// and runs the bootstrap. `map` and `gametype` are bare names, e.g.
@@ -147,6 +167,7 @@ impl ScriptRuntime {
         Self::load_from(
             Box::new(PakScripts::new(fs.clone(), None)),
             fs,
+            None,
             map,
             gametype,
             configstrings,
@@ -167,6 +188,7 @@ impl ScriptRuntime {
     pub fn load_from(
         source: Box<dyn ScriptSource>,
         fs: Rc<Pk3Fs>,
+        map_data: Option<&ScriptMapData>,
         map: &str,
         gametype: &str,
         configstrings: Vec<String>,
@@ -212,16 +234,23 @@ impl ScriptRuntime {
         // entity before `main` runs: the entity lump goes in first, then the
         // pre-scan (which only reads the loader, not the table), and only
         // then does `main` start.
-        let bsp_path = fs
-            .resolve_map(map)
-            .ok_or_else(|| anyhow::anyhow!("map {map} not found in the mounted paks"))?;
-        let bsp_bytes = fs
-            .read(&bsp_path)
-            .ok_or_else(|| anyhow::anyhow!("reading {bsp_path}"))?;
-        let bsp = vcod_common::bsp::parse(&bsp_bytes)?;
-        host.model_bounds = bsp.models.iter().map(|m| (m.mins, m.maxs)).collect();
-        host.model_brushes = crate::game::trigger::model_brush_hulls(&bsp);
-        vm.with_cx(|cx| spawn_entities_from_string(&mut host, cx, &bsp.entities))
+        let loaded;
+        let map_data = if let Some(map_data) = map_data {
+            map_data
+        } else {
+            let bsp_path = fs
+                .resolve_map(map)
+                .ok_or_else(|| anyhow::anyhow!("map {map} not found in the mounted paks"))?;
+            let bsp_bytes = fs
+                .read(&bsp_path)
+                .ok_or_else(|| anyhow::anyhow!("reading {bsp_path}"))?;
+            let bsp = vcod_common::bsp::parse(&bsp_bytes)?;
+            loaded = ScriptMapData::from_bsp(&bsp);
+            &loaded
+        };
+        host.model_bounds = map_data.model_bounds.clone();
+        host.model_brushes = map_data.model_brushes.clone();
+        vm.with_cx(|cx| spawn_entities_from_string(&mut host, cx, &map_data.entities))
             .map_err(|e| anyhow::anyhow!("spawning {map}'s entities: {e:?}"))?;
 
         // The closure calls far more builtins than the host answers yet.
@@ -2432,6 +2461,7 @@ mod tests {
         let err = ScriptRuntime::load_from(
             Box::new(NoMain(fs.clone())),
             fs,
+            None,
             "mp_pavlov",
             "nomain",
             vec![String::new(); 2048],

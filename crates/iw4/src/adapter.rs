@@ -437,7 +437,36 @@ pub fn mapents_to_entities(s: &ZoneStream<'_>, map_ents: &MapEntsGeometry) -> Re
             let byte = s.u8_at(eptr, i)?;
             result.push(byte as char);
         }
-        Ok(result)
+        // IW4 and CoD1 use different classnames for the same multiplayer
+        // spawn concepts. Normalize at the adapter boundary so stock CoD1
+        // gametype scripts can drive imported maps without map-specific code.
+        let normalized = result
+            .replace(
+                "\"classname\" \"mp_dm_spawn\"",
+                "\"classname\" \"mp_deathmatch_spawn\"",
+            )
+            .replace(
+                "\"classname\" \"mp_tdm_spawn\"",
+                "\"classname\" \"mp_teamdeathmatch_spawn\"",
+            );
+        let global = "\"classname\" \"mp_global_intermission\"";
+        let mut entities = String::with_capacity(normalized.len() + 256);
+        for block in normalized.split_inclusive('}') {
+            if block.contains(global) {
+                entities.push_str(&block.replace(
+                    global,
+                    "\"classname\" \"mp_deathmatch_intermission\"",
+                ));
+                entities.push('\n');
+                entities.push_str(&block.replace(
+                    global,
+                    "\"classname\" \"mp_teamdeathmatch_intermission\"",
+                ));
+            } else {
+                entities.push_str(block);
+            }
+        }
+        Ok(entities)
     } else {
         Ok(String::new())
     }

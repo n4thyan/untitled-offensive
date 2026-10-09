@@ -32,3 +32,51 @@ pub use stream::{
 };
 pub use zone::*;
 pub use zone_open::{ZoneImage, ZoneMemory, ZoneOpenError, open_zone};
+
+/// Load an IW4 multiplayer fastfile into the normalized BSP consumed by both
+/// the client renderer and the dedicated server. `None` means that this
+/// install does not contain the requested map.
+pub fn load_map_from_install(
+    install: &std::path::Path,
+    map: &str,
+) -> anyhow::Result<Option<vcod_common::bsp::Bsp>> {
+    let ff_path = install
+        .join("zone")
+        .join("english")
+        .join(format!("{map}.ff"));
+    if !ff_path.is_file() {
+        return Ok(None);
+    }
+
+    let zone = open_zone(&ff_path)
+        .map_err(|e| anyhow::anyhow!("cannot open {}: {e}", ff_path.display()))?;
+    let header = zone
+        .header()
+        .map_err(|e| anyhow::anyhow!("cannot parse {} header: {e}", ff_path.display()))?;
+    let mut memory = ZoneMemory::for_header(&header);
+    let mut stream = memory
+        .stream(&zone.bytes)
+        .map_err(|e| anyhow::anyhow!("cannot create {} stream: {e:?}", ff_path.display()))?;
+    let mut capture = adapter::WorldCapture::default();
+    load_zone(&mut stream, &mut capture)
+        .map_err(|e| anyhow::anyhow!("cannot load {}: {e:?}", ff_path.display()))?;
+
+    let gfx = capture
+        .gfx_world
+        .ok_or_else(|| anyhow::anyhow!("no GfxWorld found in {}", ff_path.display()))?;
+    let clip = capture
+        .clip_map
+        .ok_or_else(|| anyhow::anyhow!("no ClipMap found in {}", ff_path.display()))?;
+    let map_ents = capture
+        .map_ents
+        .ok_or_else(|| anyhow::anyhow!("no MapEnts found in {}", ff_path.display()))?;
+    let bsp = adapter::build_bsp_with_materials(
+        &stream,
+        &gfx,
+        &clip,
+        &map_ents,
+        &capture.material_images,
+    )
+    .map_err(|e| anyhow::anyhow!("cannot normalize {}: {e}", ff_path.display()))?;
+    Ok(Some(bsp))
+}

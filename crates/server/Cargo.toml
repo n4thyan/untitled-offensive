@@ -12,6 +12,7 @@ description = "Call of Duty (2003) 1.1 dedicated server, in progress"
 [dependencies]
 vcod-common.workspace = true
 vcod-gsc.workspace = true
+iw4 = { path = "../iw4" }
 anyhow.workspace = true
 clap.workspace = true
 env_logger.workspace = true

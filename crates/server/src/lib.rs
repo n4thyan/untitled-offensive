@@ -11,6 +11,7 @@ pub mod cvars;
 pub mod follow;
 pub mod game;
 pub mod items;
+pub mod map_loader;
 pub mod server;
 pub mod spectate;
 pub mod weapons;

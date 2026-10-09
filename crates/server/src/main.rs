@@ -115,12 +115,9 @@ fn main() -> Result<()> {
         Pk3Fs::open_layered(&dir, args.overlay_dir.as_deref())
             .with_context(|| format!("opening game data in {}", dir.display()))?,
     );
-    let Some(bsp_path) = fs.resolve_map(&args.map) else {
-        bail!("map {} not found in {}", args.map, dir.display());
-    };
-    // A corrupt map fails here rather than at first use.
-    let bsp_bytes = fs.read(&bsp_path).context("reading the bsp")?;
-    let bsp = vcod_common::bsp::parse(&bsp_bytes).context("parsing the bsp")?;
+    // A missing or corrupt map fails here rather than at first use. The same
+    // seam handles native CoD1 BSPs and normalized IW4 fastfiles.
+    let bsp = vcod_server::map_loader::load(&fs, &args.map)?;
 
     let overlay = match &args.gametype_script {
         Some(path) => {
@@ -157,7 +154,7 @@ fn main() -> Result<()> {
         Instant::now(),
     );
     server.load_classes(&args.classes_dir);
-    server.load_world(vcod_server::world::World::from_bsp(&bsp, Some(&fs)));
+    server.load_bsp(&bsp, Some(&fs));
     if let Some((stem, text)) = &overlay {
         server.overlay_script(&format!("maps/mp/gametypes/{stem}"), text);
     }

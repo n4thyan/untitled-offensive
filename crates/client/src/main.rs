@@ -545,6 +545,13 @@ fn maplist_for(fs: &Pk3Fs) -> vcod_common::maplist::MapRegistry {
     registry
 }
 
+fn map_available_locally(fs: &Pk3Fs, map: &str) -> bool {
+    fs.resolve_map(map).is_some()
+        || vcod_common::maplist::find_mw2_install().is_some_and(|install| {
+            vcod_common::maplist::iw4_map_available(&install, map)
+        })
+}
+
 /// The Create-a-Class profile directory a locally-spawned server reads. Prefers
 /// the repository-relative path (the client is normally run from the repo root),
 /// then one beside the executable.
@@ -1179,7 +1186,6 @@ fn reopen_fs(
 /// Try to load an IW4 (MW2) map from the local install.
 /// Returns Ok(None) if this is not an IW4 map or no install is found.
 fn try_load_iw4_map(map: &str, fs: &mut Pk3Fs) -> Result<Option<vcod_common::bsp::Bsp>> {
-    use iw4::{load_zone, open_zone, ZoneMemory};
     use vcod_common::maplist::{find_mw2_install, iw4_map_available};
 
     let install = match find_mw2_install() {
@@ -1194,55 +1200,10 @@ fn try_load_iw4_map(map: &str, fs: &mut Pk3Fs) -> Result<Option<vcod_common::bsp
     fs.mount_dir(&install.join("main"), "iwd")
         .with_context(|| format!("cannot mount MW2 image archives from {}", install.display()))?;
 
-    let ff_path = install
-        .join("zone")
-        .join("english")
-        .join(format!("{map}.ff"));
-    if !ff_path.exists() {
+    let Some(bsp) = iw4::load_map_from_install(&install, map)? else {
         return Ok(None);
-    }
-
-    let zone = open_zone(&ff_path)
-        .map_err(|e| anyhow::anyhow!("cannot open {}: {e}", ff_path.display()))?;
-    let header = zone
-        .header()
-        .map_err(|e| anyhow::anyhow!("cannot parse header: {e}"))?;
-
-    let mut memory = ZoneMemory::for_header(&header);
-    let mut stream = memory
-        .stream(&zone.bytes)
-        .map_err(|e| anyhow::anyhow!("cannot create stream: {e:?}"))?;
-
-    let mut capture = iw4::adapter::WorldCapture::default();
-    load_zone(&mut stream, &mut capture).map_err(|e| anyhow::anyhow!("cannot load zone: {e:?}"))?;
-
-    let gfx = match capture.gfx_world {
-        Some(g) => g,
-        None => {
-            return Err(anyhow::anyhow!(
-                "no GfxWorld found in {}",
-                ff_path.display()
-            ))
-        }
     };
-    let clip = match capture.clip_map {
-        Some(c) => c,
-        None => return Err(anyhow::anyhow!("no ClipMap found in {}", ff_path.display())),
-    };
-    let map_ents = match capture.map_ents {
-        Some(m) => m,
-        None => return Err(anyhow::anyhow!("no MapEnts found in {}", ff_path.display())),
-    };
-
-    // Use the full adapter conversion — the same path the adapter_test proves
-    let bsp = iw4::adapter::build_bsp_with_materials(
-        &stream,
-        &gfx,
-        &clip,
-        &map_ents,
-        &capture.material_images,
-    )
-    .map_err(|e| anyhow::anyhow!("cannot build Bsp from IW4 data: {e}"))?;
+    let ff_path = install.join("zone/english").join(format!("{map}.ff"));
 
     log::info!("iw4: loaded {} from {} ({} verts, {} indices, {} surfaces, {} planes, {} brushes, {} collision verts, {} entities)",
         map, ff_path.display(), bsp.verts.len(), bsp.indices.len(), bsp.soups.len(),
@@ -2546,7 +2507,7 @@ impl ApplicationHandler for App {
                             }
                             Phase::Loading { loader } => {
                                 let map = loader.map().to_string();
-                                let map_resolves = self.fs.resolve_map(&map).is_some();
+                                let map_resolves = map_available_locally(&self.fs, &map);
                                 let mut waited = None;
                                 // A Ready or Failed loader is never stepped again:
                                 // Ready swaps the phase, Failed exits.
