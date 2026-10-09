@@ -432,7 +432,7 @@ const MAP_META: &[MapMeta] = &[
         recommended_players: "",
         tags: &["iw", "industrial", "close-quarters"],
         // Geometry, spawn and collision are verified. Keep this false until
-        // diffuse textures and readable lighting pass a human runtime check.
+        // the complete normal multiplayer visual/lifecycle gate passes.
         verified: false,
         playlist_tags: &["iw_classics"],
     },
@@ -883,9 +883,10 @@ mod tests {
         assert_eq!(ids(classic), vec!["mp_carentan"]);
         assert_eq!(ids(community), vec!["mp_stanjel"]);
         assert_eq!(ids(quick), vec!["mp_carentan", "mp_stanjel"]);
-        // Rust is authored as iw4_native but unverified: IW Classics is empty
-        // until a real runtime pass flips it.
-        assert!(ids(iw).is_empty(), "unverified Rust is not offered yet");
+        assert!(
+            ids(iw).is_empty(),
+            "Rust remains hidden until its full gate passes"
+        );
     }
 
     /// The vote pool respects the playlist: no cross-playlist leakage.

@@ -1,5 +1,84 @@
 # UNTITLED — Session Handoff
 
+## AUTHORITATIVE PARKED CHECKPOINT — 2026-10-09
+
+This section supersedes older status/next-task sections below. The older notes
+remain as development history; do not use them to decide current priorities.
+
+### What landed on `main`
+
+| Commit | Milestone |
+|---|---|
+| `a6a86c2` | Native MW2 Rust through the normal multiplayer map seam |
+| `ccddab8` | Worldless boot frontend, Play lobby, mouse/keyboard input and owned local-match lifecycle |
+| `e619fe0` | Generic authoritative spawn validation shared by humans and bots |
+| `0265c36` | Procedural sprint viewmodel presentation; mantle assessed and deliberately deferred |
+| `4fdc7e6` | Shared local-console/RCON command registry and authenticated bounded RCON |
+| `d1ea277` | Bounded server-authoritative input validation and documented tick authority |
+| `4182fc7` | Retail-free friends package tooling, launcher and friends README |
+
+Rust's earlier material checkpoint is `f410742`; do not reopen its surface,
+index, winding, geometry, collision, spawn, IWI or material-layout research.
+
+### Runtime evidence from the parked build
+
+- Normal no-argument startup was visually checked: the UNTITLED frontend opens
+  with a neutral background and no map/server behind it.
+- Keyboard navigation opened Play. Rust appeared under **IW Classics**, DM and
+  four bots were selected, and **START MATCH** launched the ordinary local
+  `vcod-server`/client path.
+- The real Rust world, textures, collision, HUD and Thompson class loaded. The
+  server log confirmed four bots, a human spawn with the selected class, damage,
+  kills and respawns.
+- Nathan's final human check: the game loaded and bots could kill the player,
+  but their player models were invisible. This is acceptable for this parked
+  checkpoint, not a claim that Rust's full visual/gameplay gate is complete.
+- That test temporarily promoted Rust into IW Classics. The parked source keeps
+  `mp_rust` at `verified: false`, so friends do not receive a map with invisible
+  opponents. Promote it only after the full visual/lifecycle gate passes.
+- The server emitted false-positive `UnownedWeapon` strikes during death,
+  killcam or weapon-transition states. Validation is log-only and never bans;
+  next session should gate ownership validation to a live `PmType::Normal`
+  player. A TDD regression test was explored but intentionally not left in the
+  tree when work was parked.
+
+### Current feature state
+
+- Frontend/lifecycle: implemented and automated-tested; initial worldless boot
+  and frontend-started Rust were runtime-checked.
+- Spawn safety: implemented generically for CoD1/custom/IW4 normalized
+  collision. Automated tests pass; long multi-respawn 4/8-bot visual QA remains.
+- Classes: existing authoritative profile and next-spawn selection preserved;
+  Rust runtime log showed the Thompson/Colt/frag class applied.
+- Sprint pose: implemented procedurally. No proprietary animation was added.
+- Mantle: **deferred** after architecture assessment; do not let it block alpha.
+- RCON: implemented with shared command handlers, disabled on empty password,
+  authentication, bounds, rate limits and tick-boundary mutation. Automated
+  protocol/security tests exist; live third-party RCON-client QA remains.
+- Anti-cheat: conservative log-only authoritative checks implemented. Fix the
+  false-positive weapon-state case before considering enforcement.
+- Tick order: documented in `docs/server-tick-authority.md`; simulation mutation
+  remains on controlled server boundaries.
+- Packaging: guarded allowlist packager and retail-extension scanner exist.
+  The package must be regenerated from the final parked commit before sharing.
+
+### First tasks next session
+
+1. Reproduce and fix invisible remote player/bot models on Rust without touching
+   the proven Rust world/material/collision pipeline.
+2. Add the regression test and gate `UnownedWeapon` validation to live normal
+   play; confirm ordinary live weapon-switch abuse is still detected.
+3. Complete the lifecycle matrix: Rust → frontend → Carentan → frontend → Rust.
+4. Run 4-bot and 8-bot multi-respawn spawn-safety checks on Rust and Carentan.
+5. Exercise authenticated RCON live (good/bad password, status, say, addbot,
+   kick and map_restart), then regenerate and verify the friends package.
+
+Do not port another MW2 map before those checks. Do not expose `mp_toccoa` in
+playlists. Do not ship/extract retail `.ff`, `.iwd`, `.iwi`, BSP, texture,
+model or audio files. Nothing from this project has been pushed.
+
+---
+
 A new classic Call of Duty–era FPS built on the vcod fork, running genuine
 Call of Duty 1.1 content from the user's own retail installation.
 

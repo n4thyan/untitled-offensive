@@ -1,5 +1,20 @@
 # vcod
 
+## UNTITLED alpha fork
+
+This checkout is the UNTITLED multiplayer alpha built on vcod. Normal startup
+now opens a worldless frontend with mouse and keyboard navigation; Play can
+start owned local DM/TDM bot matches, Create-a-Class persists server-authorized
+loadouts, and Leave Match returns to the frontend. The project also contains a
+native read-only MW2 Rust loader, authenticated bounded RCON, generic spawn
+safety, sprint presentation and authoritative-input validation.
+
+For the current build/run instructions and limitations, read
+[`FRIENDS-ALPHA.md`](FRIENDS-ALPHA.md). For the exact continuation point and
+known bugs, read the newest section at the top of [`HANDOFF.md`](HANDOFF.md).
+No retail CoD1 or MW2 assets are distributed by this repository or its friends
+package.
+
 A map viewer, spectator client and (skeleton) dedicated server for Call of
 Duty (2003), patch 1.1, written in Rust. It reads the game's own pk3 archives,
 renders maps with their lightmaps and props, lets you walk them with the

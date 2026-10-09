@@ -55,9 +55,10 @@ MW2 discovery is currently read-only and checks these exact Steam locations:
 - `D:\Steam\steamapps\common\Call of Duty Modern Warfare 2`
 
 The install must contain `iw4mp.exe`, `zone`, and `zone/english/mp_rust.ff`.
-There is not yet an MW2 path override. Rust is experimental and remains hidden
-from verified playlists; a direct local viewer launch is `vcod.exe mp_rust
---game-dir "%COD_DIR%"`.
+There is not yet an MW2 path override. Rust uses the same frontend, dedicated
+server, classes, bots and gameplay path as CoD1 maps, but remains hidden from
+the friends playlist until invisible remote models and the full lifecycle gate
+are fixed and verified.
 
 ## Fast local bot match
 
@@ -71,11 +72,12 @@ The script starts `vcod-server.exe` on UDP 28960, waits 12 seconds, then joins
 with `vcod.exe`. It writes logs to `dev-logs`, reads retail data in place, and
 does not write into the retail install. Run `stop-dev-match.bat` when finished.
 
-Inside a connected match, press **M** for the multiplayer menu. **Play** exposes
+Starting `vcod.exe` with no map or `--connect` opens the frontend with no world
+or server running behind it. **Play** exposes
 the verified playlist, map, DM/TDM, bot count and bot-combat settings. **START
 MATCH** starts the sibling `vcod-server.exe` on loopback and reconnects. A
-client-owned local server is stopped by **Leave Match**. Starting `vcod.exe`
-without a map or `--connect` is not yet a menu entry point.
+client-owned local server is stopped by **Leave Match**. The menus accept both
+mouse hover/click/wheel and Arrow keys/Enter/Escape.
 
 ## Dedicated host
 
@@ -164,23 +166,47 @@ Click the game window to capture the mouse.
 
 ## RCON
 
-**Pending integration.** This base does not expose an RCON password, protocol or
-administrator command set. Do not expose the server on the assumption that it
-can be remotely administered. This section must be replaced with tested commands
-after the RCON branch is integrated.
+RCON is disabled unless the host passes a non-empty password. The server does
+not enforce password complexity; the operator must choose a strong, unique
+value:
+
+```bat
+vcod-server.exe --game-dir "C:\path\to\Call of Duty" --rcon-password "CHOOSE_A_STRONG_PASSWORD" mp_carentan
+```
+
+It uses the classic connectionless UDP request format: four `0xFF` bytes followed
+by `rcon <password> <command>` on the game port. Use an id-tech-compatible
+RCON client and start with `help`, `status` or `serverinfo`. Useful commands
+include `say`, `tell`, `kick`, `map`, `map_restart`, `map_rotate`, `gametype`,
+`mapvote`, `addbot`, `kickbot`, `kickbots`, `botcount`, `botsshoot`, `set`, `get`,
+`pause`, `unpause`, `dumpstats` and `dumpprofile`.
+
+RCON requests and output are bounded and rate-limited, authentication happens
+before command parsing, and game mutations execute at the server tick boundary.
+The password is never returned by commands or written to the game log. This
+alpha intentionally omits persistent bans, mute state, arbitrary shell commands
+and unrestricted config-file execution.
+
+Classic RCON sends its password and commands over connectionless UDP without
+encryption. Use it only on a trusted LAN or through a VPN, and firewall the game
+port to trusted source addresses. Do not expose RCON directly to the Internet.
 
 ## Known alpha limitations
 
-- The normal entry path is a direct connection or map argument; menu-only startup
-  is not wired yet.
 - Stats/Leaderboards and Options are visible but disabled.
-- Only DM and TDM are offered by player-facing playlists. `mp_rust` and most
-  community-map metadata remain unverified and are hidden by playlist gates.
+- Only DM and TDM are offered by player-facing playlists. Rust and most
+  community-map metadata remain unverified and hidden by playlist gates.
+- Rust loads and bot combat is functional, but other player/bot models were
+  invisible in the latest human playtest. They can still move, shoot and kill.
+  Treat this as the first visual bug for the next session.
+- Early server-authority logging can falsely report an unowned weapon during
+  death/killcam or weapon-transition states. It is log-only and does not ban,
+  but the ownership check should be gated to a live `PmType::Normal` player.
 - Bots are debug opponents, not production AI.
 - Mounted MG server simulation exists, but the client does not draw the gun.
 - Some HUD pieces, mover prediction, other-player footsteps and several visual
   fidelity details remain incomplete. There is no mantling, matching CoD 1.1 MP.
-- RCON and an in-game LAN/server browser are not integrated.
+- There is no in-game LAN/server browser; host and join by direct IP.
 - A stale server already holding UDP 28960 can make a new host fail to bind;
   stop old `vcod-server.exe` processes and inspect `dev-logs/server.log`.
 
