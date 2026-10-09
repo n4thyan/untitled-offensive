@@ -120,6 +120,10 @@ enum Stage {
 }
 
 impl Bot {
+    pub fn set_shoot(&mut self, shoot: bool) {
+        self.shoot = shoot;
+    }
+
     pub fn new(team: &str, shoot: bool, seed: u64) -> Self {
         Bot {
             name: String::new(),

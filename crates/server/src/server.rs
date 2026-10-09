@@ -16,7 +16,7 @@ use crate::game::stuck::{stuck_in_client, StuckView};
 use crate::game::temp_entity;
 use crate::spectate::{ClientSim, PmType};
 use crate::world::{TestEntities, World};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -53,6 +53,12 @@ const GLOBAL_BURST: u32 = 10;
 const GLOBAL_PERIOD: Duration = Duration::from_millis(100);
 /// Source ips tracked at once; the least recently seen is evicted.
 const MAX_BUCKETS: usize = 1024;
+const MAX_RCON_PACKET_BYTES: usize = 4096;
+const MAX_RCON_QUEUE: usize = 64;
+const RCON_PACKET_BURST: u32 = 10;
+const RCON_PACKET_PERIOD: Duration = Duration::from_secs(1);
+const RCON_AUTH_BURST: u32 = 5;
+const RCON_AUTH_PERIOD: Duration = Duration::from_secs(60);
 /// clc ops, 2 bits on the wire.
 const CLC_MOVE: i32 = 0;
 const CLC_MOVE_NO_DELTA: i32 = 1;
@@ -163,6 +169,57 @@ impl RateLimiter {
     fn reply_limited(&mut self, from: IpAddr, now: Instant) -> bool {
         self.addr_limited(from, now) || self.global.limited(now, GLOBAL_BURST, GLOBAL_PERIOD)
     }
+}
+
+struct RconState {
+    password: String,
+    packets: HashMap<IpAddr, Bucket>,
+    failed_auth: HashMap<IpAddr, Bucket>,
+    pending: VecDeque<(SocketAddr, String)>,
+}
+
+impl RconState {
+    fn new() -> Self {
+        Self {
+            password: String::new(),
+            packets: HashMap::new(),
+            failed_auth: HashMap::new(),
+            pending: VecDeque::new(),
+        }
+    }
+
+    fn limited(
+        buckets: &mut HashMap<IpAddr, Bucket>,
+        from: IpAddr,
+        now: Instant,
+        burst: u32,
+        period: Duration,
+    ) -> bool {
+        if !buckets.contains_key(&from) && buckets.len() >= MAX_BUCKETS {
+            if let Some(oldest) = buckets
+                .iter()
+                .min_by_key(|(_, b)| b.last)
+                .map(|(ip, _)| *ip)
+            {
+                buckets.remove(&oldest);
+            }
+        }
+        buckets
+            .entry(from)
+            .or_insert(Bucket { last: now, used: 0 })
+            .limited(now, burst, period)
+    }
+}
+
+fn constant_timeish_eq(expected: &[u8], supplied: &[u8]) -> bool {
+    let mut different = expected.len() ^ supplied.len();
+    let len = expected.len().max(supplied.len());
+    for i in 0..len {
+        different |= usize::from(
+            expected.get(i).copied().unwrap_or(0) ^ supplied.get(i).copied().unwrap_or(0),
+        );
+    }
+    different == 0
 }
 
 /// One op of a client message, read out before any of it is applied.
@@ -951,6 +1008,12 @@ pub struct Server {
     /// Whether a vote has already been opened for the level now running, so a
     /// script that calls `exitlevel` twice does not open two ballots.
     vote_opened: bool,
+    /// Whether game simulation is stopped by an administrator.
+    paused: bool,
+    /// Monotonic process start used by the uptime command.
+    started_at: Instant,
+    /// Authenticated remote-console requests waiting for the tick boundary.
+    rcon: RconState,
     /// The playlist a vote's candidates are drawn from, by id. `None` means
     /// the whole registry - what an unconfigured dedicated server gets.
     vote_playlist: Option<&'static str>,
@@ -970,6 +1033,44 @@ fn oob_arg(rest: &[u8]) -> String {
     String::from_utf8_lossy(rest)
         .trim_end_matches(['\n', '\0'])
         .to_string()
+}
+
+fn split_arg(text: &str) -> Option<(&str, &str)> {
+    let (first, rest) = text.trim().split_once(char::is_whitespace)?;
+    let rest = rest.trim();
+    (!first.is_empty() && !rest.is_empty()).then_some((first, rest))
+}
+
+fn parse_usize(text: &str, usage: &str) -> Result<usize, String> {
+    if text.split_whitespace().count() != 1 {
+        return Err(format!("usage: {usage}"));
+    }
+    text.parse().map_err(|_| format!("usage: {usage}"))
+}
+
+fn parse_bool(text: &str) -> Option<bool> {
+    match text.to_ascii_lowercase().as_str() {
+        "1" | "on" | "true" => Some(true),
+        "0" | "off" | "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn admin_message(text: &str) -> String {
+    text.chars()
+        .filter(|c| !c.is_control())
+        .map(|c| if matches!(c, '"' | '\\') { '\'' } else { c })
+        .take(256)
+        .collect()
+}
+
+fn admin_reason(text: &str) -> String {
+    let reason = admin_message(text);
+    if reason.is_empty() {
+        "kicked by administrator".into()
+    } else {
+        reason
+    }
 }
 
 /// The last script menu `Cmd_MenuResponse_f` (0x486d8) will look up, and the
@@ -1104,6 +1205,9 @@ impl Server {
             registry: MapRegistry::default(),
             vote: Vote::default(),
             vote_opened: false,
+            paused: false,
+            started_at: now,
+            rcon: RconState::new(),
             vote_playlist: None,
         };
         // `(rand() << 16) ^ rand() ^ Sys_Milliseconds()`, SV_SpawnServer 0x808a3e0.
@@ -1164,6 +1268,13 @@ impl Server {
         std::mem::take(&mut self.outbox)
     }
 
+    /// An empty password disables RCON. The value is never logged or returned.
+    pub fn set_rcon_password(&mut self, password: &str) {
+        self.rcon.password.clear();
+        self.rcon.password.push_str(password);
+        self.rcon.pending.clear();
+    }
+
     fn send_oob(&mut self, to: SocketAddr, text: &str) {
         self.outbox.push((to, build_oob(text)));
     }
@@ -1196,6 +1307,7 @@ impl Server {
                 }
             }
             "connect" => self.svc_direct_connect(from, raw, now),
+            "rcon" => self.svc_rcon(from, rest, raw.len(), now),
             // Retail drops by source address alone; the bucket keeps a spoofer
             // from cycling a slot faster than the client can reconnect.
             "disconnect" => {
@@ -1207,6 +1319,55 @@ impl Server {
             }
             other => log::debug!("{from}: unhandled oob {other:?}"),
         }
+    }
+
+    fn svc_rcon(&mut self, from: SocketAddr, rest: &[u8], packet_len: usize, now: Instant) {
+        if self.rcon.password.is_empty() {
+            return;
+        }
+        if packet_len > MAX_RCON_PACKET_BYTES
+            || RconState::limited(
+                &mut self.rcon.packets,
+                from.ip(),
+                now,
+                RCON_PACKET_BURST,
+                RCON_PACKET_PERIOD,
+            )
+        {
+            return;
+        }
+        let split = rest.iter().position(u8::is_ascii_whitespace);
+        let (supplied, command) =
+            split.map_or((rest, &[][..]), |at| (&rest[..at], &rest[at + 1..]));
+        if !constant_timeish_eq(self.rcon.password.as_bytes(), supplied) {
+            if !RconState::limited(
+                &mut self.rcon.failed_auth,
+                from.ip(),
+                now,
+                RCON_AUTH_BURST,
+                RCON_AUTH_PERIOD,
+            ) {
+                self.send_oob(from, "print\nBad rconpassword.");
+            }
+            return;
+        }
+        let Ok(command) = std::str::from_utf8(command) else {
+            self.send_oob(from, "print\nMalformed RCON request");
+            return;
+        };
+        let command = command.trim();
+        if command.is_empty()
+            || command.len() > crate::admin::MAX_COMMAND_BYTES
+            || command.contains(['\0', '\r', '\n'])
+        {
+            self.send_oob(from, "print\nMalformed RCON request");
+            return;
+        }
+        if self.rcon.pending.len() >= MAX_RCON_QUEUE {
+            self.send_oob(from, "print\nRCON queue full");
+            return;
+        }
+        self.rcon.pending.push_back((from, command.to_string()));
     }
 
     /// `SVC_Info` (cod_lnxded 0x808c1ac). Key order is retail's;
@@ -2282,7 +2443,13 @@ impl Server {
 
     /// Takes the first free slots for the configured bot count.
     fn spawn_bots(&mut self) {
-        for i in 0..self.cfg.bots {
+        while self.bots.len() < self.cfg.bots {
+            let i = (0..self.cfg.max_clients)
+                .find(|i| {
+                    let name = format!("bot{}", i + 1);
+                    !self.bots.values().any(|bot| bot.name == name)
+                })
+                .unwrap_or(self.bots.len());
             let Some(slot) = self.clients.iter().position(Option::is_none) else {
                 log::warn!("no free slot for bot {}", i + 1);
                 return;
@@ -2541,11 +2708,7 @@ impl Server {
     }
 
     /// Install collision and script-facing map data from one normalized BSP.
-    pub fn load_bsp(
-        &mut self,
-        bsp: &vcod_common::bsp::Bsp,
-        fs: Option<&vcod_common::pk3::Pk3Fs>,
-    ) {
+    pub fn load_bsp(&mut self, bsp: &vcod_common::bsp::Bsp, fs: Option<&vcod_common::pk3::Pk3Fs>) {
         self.world = Some(Rc::new(World::from_bsp(bsp, fs)));
         self.script_map = Some(Rc::new(crate::game::script::ScriptMapData::from_bsp(bsp)));
     }
@@ -3169,16 +3332,432 @@ impl Server {
         self.console.push_back(line.to_string());
     }
 
-    /// `Cbuf_Execute` for the three commands the map cycle uses; anything
-    /// else logs and drops. A command pushed by a builtin during the script
-    /// pass runs here, at the top of the next tick, which is `EXEC_APPEND`.
-    ///
-    /// A load that failed before the teardown -- no paks, a map the paks do
-    /// not have, a bsp that would not parse -- leaves the level that is
-    /// serving alone and is logged. One that failed after it -- the map or
-    /// gametype scripts -- has no level left to fall back to, so it stops the
-    /// drain and ends the process through [`Self::take_fatal`].
     fn drain_console(&mut self) {
+        let local = std::mem::take(&mut self.console);
+        for line in local {
+            match self.execute_admin(&line, "local console") {
+                Ok(output) if !output.is_empty() => {
+                    let folded = line.to_ascii_lowercase();
+                    if ["password", "passwd", "secret", "token"]
+                        .iter()
+                        .any(|word| folded.contains(word))
+                    {
+                        log::info!("console: <redacted>");
+                    } else {
+                        log::info!("console: {output}");
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => log::warn!("console: {error}"),
+            }
+        }
+        let remote = std::mem::take(&mut self.rcon.pending);
+        for (from, line) in remote {
+            let source = from.to_string();
+            let result = match self.execute_admin(&line, &source) {
+                Ok(output) => output,
+                Err(error) => error,
+            };
+            self.send_oob(from, &format!("print\n{}", crate::admin::bounded(result)));
+        }
+    }
+
+    fn execute_admin(&mut self, line: &str, source: &str) -> Result<String, String> {
+        let parsed = crate::admin::parse(line).map_err(|e| {
+            if e == "unknown command" {
+                format!(
+                    "Unknown command: {}",
+                    line.split_whitespace().next().unwrap_or("")
+                )
+            } else {
+                e.to_string()
+            }
+        })?;
+        let name = parsed.spec.name;
+        let args = parsed.args;
+        let result = match name {
+            "help" => {
+                if args.is_empty() {
+                    format!("commands: {}", crate::admin::command_list())
+                } else {
+                    let spec = crate::admin::find(args)
+                        .ok_or_else(|| format!("Unknown command: {args}"))?;
+                    format!("{} - {}", spec.usage, spec.summary)
+                }
+            }
+            "status" => {
+                let mut out = format!(
+                    "{} players; map {}; gametype {}\n",
+                    self.client_count(),
+                    self.cfg.map,
+                    self.cfg.gametype
+                );
+                for (slot, client) in self.clients.iter().enumerate() {
+                    if let Some(client) = client {
+                        out.push_str(&format!(
+                            "{slot}: {}{}\n",
+                            client.name,
+                            if client.is_bot { " [bot]" } else { "" }
+                        ));
+                    }
+                }
+                out.trim_end().to_string()
+            }
+            "serverinfo" => format!(
+                "hostname: {}\nmap: {}\ngametype: {}\nclients: {}/{}\npassword: {}",
+                self.cfg.hostname,
+                self.cfg.map,
+                self.cfg.gametype,
+                self.client_count(),
+                self.cfg.max_clients,
+                if self.admin_cvar("g_password").is_empty() {
+                    "disabled"
+                } else {
+                    "enabled"
+                }
+            ),
+            "version" => format!("vcod-server {}", env!("CARGO_PKG_VERSION")),
+            "uptime" => format!("uptime: {}s", self.started_at.elapsed().as_secs()),
+            "say" | "centerprint" => {
+                if args.is_empty() {
+                    return Err(format!("usage: {}", parsed.spec.usage));
+                }
+                let text = admin_message(args);
+                let command = if name == "say" {
+                    format!("f \"console: {text}\"")
+                } else {
+                    format!("c \"{text}\"")
+                };
+                for slot in 0..self.clients.len() {
+                    if self.clients[slot].is_some() {
+                        self.send_server_command(slot, &command);
+                    }
+                }
+                "message sent".to_string()
+            }
+            "tell" => {
+                let (target, message) =
+                    split_arg(args).ok_or_else(|| format!("usage: {}", parsed.spec.usage))?;
+                let slot = self
+                    .admin_slot(target, false)
+                    .ok_or_else(|| "client not found".to_string())?;
+                self.send_server_command(
+                    slot,
+                    &format!("f \"console: {}\"", admin_message(message)),
+                );
+                format!("message sent to {slot}")
+            }
+            "kick" => {
+                let (target, reason) = split_arg(args).unwrap_or((args, "kicked by administrator"));
+                let slot = self
+                    .admin_slot(target, false)
+                    .ok_or_else(|| "client not found".to_string())?;
+                self.drop_client(slot, &admin_reason(reason));
+                if self.bots.remove(&slot).is_some() {
+                    self.cfg.bots = self.bots.len();
+                }
+                format!("kicked client {slot}")
+            }
+            "kickall" => {
+                let slots: Vec<usize> = self
+                    .clients
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, c)| c.as_ref().filter(|c| !c.is_bot).map(|_| i))
+                    .collect();
+                for slot in &slots {
+                    self.drop_client(
+                        *slot,
+                        &admin_reason(if args.is_empty() {
+                            "kicked by administrator"
+                        } else {
+                            args
+                        }),
+                    );
+                }
+                format!("kicked {} clients", slots.len())
+            }
+            "map" => {
+                if args.split_whitespace().count() != 1 {
+                    return Err(format!("usage: {}", parsed.spec.usage));
+                }
+                self.console.push_back(format!("map {args}"));
+                self.drain_map_console();
+                format!("map = {args}")
+            }
+            "map_restart" | "map_rotate" => {
+                if !args.is_empty() {
+                    return Err(format!("usage: {}", parsed.spec.usage));
+                }
+                self.console.push_back(name.to_string());
+                self.drain_map_console();
+                format!("{name} executed")
+            }
+            "gametype" => {
+                if !args.is_empty() {
+                    if args.split_whitespace().count() != 1 {
+                        return Err(format!("usage: {}", parsed.spec.usage));
+                    }
+                    self.set_admin_cvar("g_gametype", args)?;
+                }
+                format!("g_gametype = \"{}\"", self.cfg.gametype)
+            }
+            "mapvote" => {
+                self.open_map_vote();
+                if self.vote.is_open() {
+                    "map vote opened".into()
+                } else {
+                    "map vote unavailable".into()
+                }
+            }
+            "cancelvote" => {
+                self.vote.clear();
+                self.vote_opened = false;
+                for slot in 0..self.clients.len() {
+                    if self.clients[slot].is_some() {
+                        self.send_server_command(slot, "mapvote close");
+                    }
+                }
+                "map vote cancelled".into()
+            }
+            "addbot" => {
+                let count = if args.is_empty() {
+                    1
+                } else {
+                    parse_usize(args, parsed.spec.usage)?
+                };
+                self.cfg.bots = self
+                    .cfg
+                    .bots
+                    .saturating_add(count)
+                    .min(self.cfg.max_clients.saturating_sub(1));
+                self.spawn_bots();
+                format!("botcount = {}", self.bots.len())
+            }
+            "kickbot" => {
+                let slot = self
+                    .admin_slot(args, true)
+                    .ok_or_else(|| "bot not found".to_string())?;
+                self.drop_client(slot, "kicked by administrator");
+                self.bots.remove(&slot);
+                self.cfg.bots = self.bots.len();
+                format!("kicked bot {slot}")
+            }
+            "kickbots" => {
+                let slots: Vec<usize> = self.bots.keys().copied().collect();
+                for slot in &slots {
+                    self.drop_client(*slot, "kicked by administrator");
+                    self.bots.remove(slot);
+                }
+                self.cfg.bots = 0;
+                format!("kicked {} bots", slots.len())
+            }
+            "botcount" => {
+                if !args.is_empty() {
+                    let wanted = parse_usize(args, parsed.spec.usage)?
+                        .min(self.cfg.max_clients.saturating_sub(1));
+                    self.cfg.bots = wanted;
+                    while self.bots.len() > wanted {
+                        let slot = *self.bots.keys().next_back().unwrap();
+                        self.drop_client(slot, "bot count reduced");
+                        self.bots.remove(&slot);
+                    }
+                    self.spawn_bots();
+                }
+                format!("botcount = {}", self.cfg.bots)
+            }
+            "botsshoot" => {
+                if !args.is_empty() {
+                    self.cfg.bots_shoot =
+                        parse_bool(args).ok_or_else(|| format!("usage: {}", parsed.spec.usage))?;
+                    for bot in self.bots.values_mut() {
+                        bot.set_shoot(self.cfg.bots_shoot);
+                    }
+                }
+                format!("botsshoot = {}", usize::from(self.cfg.bots_shoot))
+            }
+            "set" => {
+                let (cvar, value) =
+                    split_arg(args).ok_or_else(|| format!("usage: {}", parsed.spec.usage))?;
+                self.set_admin_cvar(cvar, value)?;
+                if cvar.eq_ignore_ascii_case("g_password") {
+                    "g_password = <redacted>".to_string()
+                } else {
+                    format!("{cvar} = \"{}\"", self.admin_cvar(cvar))
+                }
+            }
+            "get" => {
+                if args.is_empty() || args.split_whitespace().count() != 1 {
+                    return Err(format!("usage: {}", parsed.spec.usage));
+                }
+                if args.eq_ignore_ascii_case("g_password") {
+                    "g_password = <redacted>".to_string()
+                } else {
+                    format!("{args} = \"{}\"", self.admin_cvar(args))
+                }
+            }
+            "sv_hostname" | "sv_maxclients" | "g_password" => {
+                if !args.is_empty() {
+                    self.set_admin_cvar(name, args)?;
+                }
+                if name == "g_password" {
+                    "g_password = <redacted>".to_string()
+                } else {
+                    format!("{name} = \"{}\"", self.admin_cvar(name))
+                }
+            }
+            "pause" => {
+                self.paused = true;
+                "server paused".into()
+            }
+            "unpause" => {
+                self.paused = false;
+                "server unpaused".into()
+            }
+            "dumpstats" => format!(
+                "map={} gametype={} clients={} bots={} time_ms={} packets={} pending_rcon={}",
+                self.cfg.map,
+                self.cfg.gametype,
+                self.client_count(),
+                self.bots.len(),
+                self.sv_time_ms,
+                self.packet_seq,
+                self.rcon.pending.len()
+            ),
+            "dumpprofile" => {
+                let name = if args.is_empty() {
+                    "default".to_string()
+                } else if let Some(slot) = self.admin_slot(args, false) {
+                    self.clients[slot].as_ref().unwrap().name.clone()
+                } else {
+                    args.to_string()
+                };
+                let profile = if name == "default" {
+                    self.classes.default_profile()
+                } else {
+                    self.classes.profile(&name)
+                };
+                let encoded = vcod_common::classes::wire::encode(profile);
+                format!("profile {name}:\n{}", encoded.join("\n"))
+            }
+            _ => return Err(format!("Unknown command: {name}")),
+        };
+        if matches!(
+            name,
+            "say"
+                | "tell"
+                | "centerprint"
+                | "kick"
+                | "kickall"
+                | "map"
+                | "map_restart"
+                | "map_rotate"
+                | "gametype"
+                | "mapvote"
+                | "cancelvote"
+                | "addbot"
+                | "kickbot"
+                | "kickbots"
+                | "botcount"
+                | "botsshoot"
+                | "set"
+                | "sv_hostname"
+                | "sv_maxclients"
+                | "g_password"
+                | "pause"
+                | "unpause"
+        ) {
+            log::info!("admin action {name} from {source}");
+        }
+        Ok(result)
+    }
+
+    fn admin_slot(&self, target: &str, bot_only: bool) -> Option<usize> {
+        let matches = |c: &Client| !bot_only || c.is_bot;
+        if let Ok(slot) = target.parse::<usize>() {
+            return self
+                .clients
+                .get(slot)?
+                .as_ref()
+                .filter(|c| matches(c))
+                .map(|_| slot);
+        }
+        self.clients.iter().enumerate().find_map(|(slot, c)| {
+            c.as_ref()
+                .filter(|c| matches(c) && c.name.eq_ignore_ascii_case(target))
+                .map(|_| slot)
+        })
+    }
+
+    fn admin_cvar(&self, name: &str) -> String {
+        match name.to_ascii_lowercase().as_str() {
+            "sv_hostname" => self.cfg.hostname.clone(),
+            "sv_maxclients" => self.cfg.max_clients.to_string(),
+            "g_gametype" => self.cfg.gametype.clone(),
+            other => self
+                .script_cvar(other)
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| {
+                    self.cvar_overrides
+                        .iter()
+                        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+                        .map_or_else(String::new, |(_, v)| v.clone())
+                }),
+        }
+    }
+
+    fn set_admin_cvar(&mut self, name: &str, value: &str) -> Result<(), String> {
+        if name.is_empty()
+            || name.len() > 64
+            || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        {
+            return Err("invalid cvar name".into());
+        }
+        if value.len() > 256 || value.bytes().any(|b| matches!(b, 0 | 10 | 13)) {
+            return Err("invalid cvar value".into());
+        }
+        if matches!(
+            name.to_ascii_lowercase().as_str(),
+            "rcon_password" | "rconpassword"
+        ) {
+            return Err("the RCON password cannot be changed through RCON".into());
+        }
+        match name.to_ascii_lowercase().as_str() {
+            "sv_hostname" => {
+                self.cfg.hostname = value.to_string();
+                self.refresh_serverinfo();
+            }
+            "sv_maxclients" => {
+                let max = value
+                    .parse::<usize>()
+                    .map_err(|_| "sv_maxclients must be a number")?
+                    .clamp(1, MAX_CLIENTS);
+                let needed = self
+                    .clients
+                    .iter()
+                    .rposition(Option::is_some)
+                    .map_or(0, |i| i + 1);
+                if max < needed {
+                    return Err(format!(
+                        "sv_maxclients cannot be below occupied slot count {needed}"
+                    ));
+                }
+                self.clients.resize_with(max, || None);
+                self.cfg.max_clients = max;
+                self.refresh_serverinfo();
+            }
+            "g_gametype" => self.set_cvar("g_gametype", value),
+            _ => self.set_cvar(name, value),
+        }
+        if let Some(rt) = self.script.as_mut() {
+            rt.host.cvars.set(name, value);
+        }
+        Ok(())
+    }
+
+    /// `Cbuf_Execute` for the map-cycle commands. Input reaches this only
+    /// after the shared admin registry has validated it.
+    fn drain_map_console(&mut self) {
         while let Some(line) = self.console.pop_front() {
             match console::Command::parse(&line) {
                 console::Command::Map(map) => {
@@ -3255,9 +3834,19 @@ impl Server {
         let ids = |maps: Vec<&vcod_common::maplist::PlayableMap>| -> Vec<String> {
             maps.into_iter().map(|m| m.id.clone()).collect()
         };
-        match self.vote_playlist.and_then(vcod_common::maplist::playlist_by_id) {
+        match self
+            .vote_playlist
+            .and_then(vcod_common::maplist::playlist_by_id)
+        {
             Some(p) => ids(self.registry.in_playlist(p)),
-            None => self.registry.maps().iter().collect::<Vec<_>>().into_iter().map(|m| m.id.clone()).collect(),
+            None => self
+                .registry
+                .maps()
+                .iter()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|m| m.id.clone())
+                .collect(),
         }
     }
 
@@ -3339,8 +3928,7 @@ impl Server {
         let result = self.vote.resolve();
         let next = match result {
             vcod_common::mapvote::Result::Map(id, tally) => {
-                let summary: Vec<String> =
-                    tally.iter().map(|(m, n)| format!("{m} x{n}")).collect();
+                let summary: Vec<String> = tally.iter().map(|(m, n)| format!("{m} x{n}")).collect();
                 log::info!("mapvote: resolved -> {id} ({})", summary.join(", "));
                 Some(id)
             }
@@ -3446,6 +4034,11 @@ impl Server {
 
     pub fn tick(&mut self, now: Instant) {
         self.drain_console();
+        if self.paused {
+            self.check_timeouts(now);
+            self.last_tick = Some(now);
+            return;
+        }
         self.step_map_vote();
         self.check_timeouts(now);
         self.step_bots();
@@ -5056,9 +5649,8 @@ mod tests {
     }
     #[test]
     fn server_registry_includes_available_iw4_maps() {
-        let registry = discover_server_registry(&vcod_common::pk3::Pk3Fs::empty(), |id| {
-            id == "mp_rust"
-        });
+        let registry =
+            discover_server_registry(&vcod_common::pk3::Pk3Fs::empty(), |id| id == "mp_rust");
         assert!(registry.is_playable("mp_rust"));
         assert_eq!(
             registry.get("mp_rust").map(|m| m.source_type),

@@ -50,6 +50,9 @@ struct Args {
     /// Whether the bots fight. Without it they only wander.
     #[arg(long)]
     bots_shoot: bool,
+    /// Remote-console password. Empty/unset disables RCON.
+    #[arg(long, default_value = "")]
+    rcon_password: String,
     /// A cvar to set before the scripts load, retail's `+set name value`;
     /// repeatable, e.g. `--set scr_friendlyfire=1`.
     #[arg(long = "set", value_name = "NAME=VALUE")]
@@ -153,6 +156,7 @@ fn main() -> Result<()> {
         },
         Instant::now(),
     );
+    server.set_rcon_password(&args.rcon_password);
     server.load_classes(&args.classes_dir);
     server.load_bsp(&bsp, Some(&fs));
     if let Some((stem, text)) = &overlay {
