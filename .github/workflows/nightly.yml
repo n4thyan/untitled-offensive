@@ -2,7 +2,7 @@ name: Nightly
 
 on:
   push:
-    branches: [master]
+    branches: [main]
     # Docs and dev tooling do not change the binaries, so they do not earn a
     # three-platform build. LICENSE and NOTICE are left off the list on
     # purpose: the Stage step ships them in the archive. So does README.md,
@@ -110,5 +110,5 @@ jobs:
             --prerelease \
             --target "$GITHUB_SHA" \
             --title "Nightly" \
-            --notes "Built from master at ${GITHUB_SHA:0:8} on $(date -u '+%Y-%m-%d %H:%M UTC'). Unstable by definition." \
+            --notes "Built from main at ${GITHUB_SHA:0:8} on $(date -u '+%Y-%m-%d %H:%M UTC'). Unstable by definition." \
             dist/*

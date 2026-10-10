@@ -1,448 +1,103 @@
-# vcod
+# UNTITLED OFFENSIVE
 
-## UNTITLED alpha fork
+An experimental classic Call of Duty sandbox built on [vcod](https://github.com/janost/vcod),
+a Rust reimplementation of parts of Call of Duty (2003) patch 1.1.
 
-This checkout is the UNTITLED multiplayer alpha built on vcod. Normal startup
-now opens a worldless frontend with mouse and keyboard navigation; Play can
-start owned local DM/TDM bot matches, Create-a-Class persists server-authorized
-loadouts, and Leave Match returns to the frontend. The project also contains a
-native read-only MW2 Rust loader, authenticated bounded RCON, generic spawn
-safety, sprint presentation and authoritative-input validation.
+This project started as an experiment with the CoD1 engine and has grown into
+a sandbox for classic Call of Duty gameplay, maps and systems. It keeps
+CoD1-style gameplay while expanding toward custom maps, Create-a-Class,
+killcam, bots, sprint, dedicated server support, RCON and experimental
+IW4 map loading.
 
-For the current build/run instructions and limitations, read
-[`FRIENDS-ALPHA.md`](FRIENDS-ALPHA.md). For the exact continuation point and
-known bugs, read the newest section at the top of [`HANDOFF.md`](HANDOFF.md).
-No retail CoD1 or MW2 assets are distributed by this repository or its friends
-package.
+## Current Highlights
 
-A map viewer, spectator client and (skeleton) dedicated server for Call of
-Duty (2003), patch 1.1, written in Rust. It reads the game's own pk3 archives,
-renders maps with their lightmaps and props, lets you walk them with the
-original movement rules, and speaks the real 1.1 network protocol well enough
-to spectate a live multiplayer server with players, animations, HUD, sound and
-combat effects.
+- Worldless boot frontend with mouse/keyboard navigation
+- Playlist system with CoD1 stock maps and community maps
+- IW4/MW2 experimental native launcher (Rust world)
+- Create-a-Class persistence with server-authoritative loadouts
+- Killcam on death
+- Dedicated server with authenticated RCON
+- Sprint and mantle (experimental)
 
-![mp_pavlov in fly mode](docs/screenshots/fly-mp_pavlov.jpg)
+## Content / Map Support
 
-![Walk mode with the kar98k viewmodel](docs/screenshots/walk-mp_pavlov.jpg)
+| Content | Status |
+| --- | --- |
+| Call of Duty 1 stock maps | Supported |
+| Community CoD1 maps | Supported |
+| IW4 / MW2 maps | Experimental |
+| Source 1 maps | Planned |
+| Other engine adapters | Research |
 
-![Spectating a public TDM server](docs/screenshots/spectate.jpg)
+## Current Status
 
-## What it does today
-
-- Loads any stock or custom map from an installed copy of the game and
-  renders it textured, lightmapped, props included. Skies, water, fences,
-  foliage and terrain detail blends draw through their authored Q3-style
-  shader scripts, with the sun disc and the map's fog. Fly around freely.
-  The map's ambient loop plays in fly and walk mode.
-- `--walk` spawns you as a soldier with Quake 3 derived movement: gravity,
-  stances, stepping, wall sliding, leaning, and the kar98k viewmodel playing
-  the game's own xanim clips. Footsteps follow the retail cadence per surface,
-  the weapon plays its file's fire/rechamber/reload sounds, and landings pick
-  their alias from fall speed.
-- `--connect <ip:port>` joins a CoD 1.1 server. The client does the
-  handshake, Huffman coding, netchan, delta snapshots and usercmds, and picks a
-  team and a weapon through the stock script menus the server opens, or
-  answers them from `--team` and `--weapon`. Until you join it follows the
-  server's spectator camera; once spawned you play: move, jump, crouch, go
-  prone, lean, fire, aim, reload, melee, use and switch weapons on retail's
-  default binds, one usercmd per 8 ms as a 125 fps retail client builds
-  them. Your own movement and view are predicted: every cmd the server has
-  not answered yet is replayed on the latest snapshot through the server's
-  own movement step, so the view responds at the cmd rate (125 Hz) and a
-  correction eases out over 100 ms. Your own weapon is drawn in first
-  person with the hands the server names for your team, playing the clip
-  the predicted playerstate picks, and the sight zooms to the weapon's own
-  fov. Your fire, reload, switch, footstep and jump events play off the
-  prediction, the muzzle flash at the viewmodel's barrel, and are not
-  played again when the snapshot carrying them arrives. While you play, the
-  HUD draws what the stock `hud.menu` lays out: a crosshair that opens with
-  the weapon's spread, health, ammo and weapon name, stance, a compass with
-  the objectives on it, the use-key hint and the direction a hit came from.
-  The gametype script's own HUD elements (the S&D clock, the plant and
-  defuse icons and progress bar, announcements) are drawn whether you play,
-  spectate or follow. It renders every
-  player as an assembled soldier playing the server-driven animations.
-  Kill feed, chat, scoreboard, sounds, tracers, impacts and muzzle flashes
-  come from the same events the retail client reads. It downloads every pak
-  the server references and the install lacks, the way the retail client
-  does, so mod paks arrive along with the map's own.
-- `vcod-server` answers server browsers, accepts connections and hands out the
-  gamestate, so a retail 1.1 client loads the map, then keeps it alive with
-  delta-compressed snapshots against the client's last acked frame. It runs
-  the game's own gametype and map scripts on its gsc VM, so a client picks a
-  team through Activision's stock menus, spawns where `_spawnlogic.gsc` puts
-  it with the weapon it chose, and moves on the shared pmove: running,
-  jumping, crouching, prone and leaning. Clients see each other and the map's
-  own entities, culled per client against the BSP's PVS the way retail culls,
-  each other player animated off `mp/playeranim.script`. Combat works: a shot
-  traces against the world and every live player, a hit runs the stock
-  `CodeCallback_PlayerDamage` for its damage, knockback and obituary, a kill
-  leaves a corpse in the body queue and drops the dead player's weapon, which
-  any player can walk over for its ammo or pick up with the use key, as it can
-  the map's own placed weapons and the health packs `dm` drops, and the victim
-  respawns on the use key. So do melee swings and grenades, the latter as real
-  missile entities that fly, bounce, rest and explode with retail's radius
-  falloff. A level ends the way retail's does, in script: the gametype's own
-  time or score limit runs the intermission, and the server's console then
-  restarts the map or loads the next entry of `sv_mapRotation` and hands the
-  new gamestate out on the live connection. Script movers move entities and
-  their trajectories reach the wire. Not there yet: the killcam.
-  `--test-entities` adds entities that move on the wire to exercise
-  the packet-entity path.
-
-The whole thing runs on wgpu and winit, so in principle it is cross-platform.
-I have only run it on Linux.
-
-It is a Cargo workspace of four crates. `crates/common` holds the file
-formats, collision, movement and the 1.1 protocol, shared by the client and
-the server; nothing in it imports wgpu, winit or kira. `crates/client` is the
-window, renderer, HUD, effects and audio; `crates/server` is the dedicated
-server. `crates/gsc` is a virtual machine for CoD's own script language
-(`.gsc`), so the dedicated server can eventually run Activision's shipped
-gameplay scripts instead of hand-written rules; it depends on neither
-`vcod-common` nor the client's rendering stack. [AGENTS.md](AGENTS.md) is
-the contributor guide.
-
-## Why
-
-Mostly to see whether it could be done. Call of Duty 1 is an id Tech 3
-descendant, and the Quake III Arena and Return to Castle Wolfenstein sources
-are public, but the 1.1 wire protocol has never been written down. Every field
-width, every enum order, every place where Infinity Ward diverged from RTCW had
-to be recovered from the binaries and confirmed against the retail server.
-That recovered protocol is documented in [docs/protocol-1.1.md](docs/protocol-1.1.md)
-and is probably the most useful thing in here.
-
-The other reason is that it is fun to watch a 2003 game come back to life in
-a window you built yourself.
-
-### This is an AI-driven project
-
-Most of the code and documentation in this repository was written by an AI
-coding agent working under my direction. I decide what to build, review what
-comes back, run it against the real game and the retail server, and do the
-pixel-level and by-ear checks the agent cannot. The research docs record for
-each fact whether it was verified live or only inferred from a decompilation,
-so you can tell the two apart. Treat the code as a working prototype, not a
-reference implementation.
+This is Alpha software, actively in development. Features are implemented
+incrementally and tested against retail game content.
 
 ## Requirements
 
-- A purchased, original copy of Call of Duty (2003) installed with patch 1.1.
-  This repository contains no game data. The 1.5 patch ships the same
-  `pak0-4.pk3` assets, so a 1.5 install also works as the asset source; the
-  netcode and the reverse-engineering notes are about 1.1.
-- Rust 1.90 or newer; the dependency graph requires it.
-- For the client, a GPU and driver with BC (DXT) texture compression. wgpu
-  picks whatever backend it finds (Vulkan, DX12, Metal, GL);
-  `WGPU_BACKEND=vulkan|gl|dx12|metal` narrows the choice. The server needs no
-  GPU.
-- I have only tested on Linux. Windows and macOS are unverified.
-- Optional, for sound: a working default output device. Without one the client
-  logs a warning and runs silent.
+- Windows x64
+- Legitimate Call of Duty (2003) installation with `main/pak0.pk3`
+- Optional: Modern Warfare 2 (2009) for experimental IW4 map content
 
-## Building and installing
+This project does not redistribute proprietary game assets. You must provide
+content from installations you legitimately own.
 
-Prebuilt binaries for Linux amd64, Windows amd64 and macOS arm64 are on the
-[nightly release](https://github.com/janost/vcod/releases/tag/nightly), rebuilt
-from `master` on every push. It is a rolling tag: the assets are replaced in
-place, so the download URLs never change and the previous build is gone.
-Linux and macOS ship as `.tar.zst`, Windows as `.zip`.
+## Building
 
-To build it yourself:
+Prerequisites: Rust 1.90+
 
-```
+```bash
 cargo build --release
 ```
 
-builds `target/release/vcod` (client) and `target/release/vcod-server`.
-`cargo build -p vcod` or `-p vcod-server` builds one of them.
+This builds `target/release/vcod` (client) and `target/release/vcod-server`.
 
-The binaries expect to sit inside the game install, next to `CoDMP.exe`, and
-read the paks from its `main/` subdirectory. Either copy them there, set
-`COD_DIR=/path/to/CallOfDuty`, or pass `--game-dir`. `--game-dir` beats
-`COD_DIR`, which beats the executable's own directory, with the working
-directory as the last resort.
+## Running
 
-### Running the tests
+```bash
+# Run a local match with a retail CoD1 install
+run-dev-match.bat
 
-```
-COD_DIR=/path/to/CallOfDuty cargo test
-```
-
-Without `COD_DIR` the tests that need game data return early and report ok,
-so a green run on a machine without the game proves nothing about the
-parsers. The net-protocol tests read committed captures and run anywhere.
-CI runs the suite this way, since the game data cannot ship with it.
-
-## Usage
-
-```
-vcod mp_pavlov
-vcod mp_pavlov --walk
-vcod --list
-vcod --connect <ip:port>
-vcod --connect <ip:port> --team axis --weapon kar98k_mp
-vcod mp_pavlov --game-dir /path/to/CallOfDuty
-```
-
-- The first positional argument is the map name (case-insensitive).
-- `--list` prints every `.bsp` in the search path instead of opening a window.
-- `--mod-dir` selects which subdirectory's pk3s to index: `main` for retail
-  CoD1 (default), `uo` for United Offensive. Only one directory mounts at a
-  time, so a UO map whose art ships in `main/` shows missing textures; noville
-  was flown this way and renders apart from that. Anything beyond noville is
-  untested.
-- `--walk` starts at a player spawn point as a collidable soldier. Needs a map
-  with a spawn entity and collidable geometry.
-- `--connect ip:port` joins a live server. To find a populated one, the
-  master server at `codmaster.activision.com:20510` still answers
-  `getservers 1 full empty`.
-- `--team <allies|axis|autoassign|spectator>` answers the stock team menu
-  without showing it; `--weapon <name>` does the same for the weapon menu,
-  with a weapon file name such as `m1carbine_mp`. A weapon the menu refuses
-  reopens it, and then you pick by hand.
-- `--debug-overlay` (or F3 at runtime) shows frame time, draw stats, net and
-  audio counters.
-- `--no-audio` runs silent; `--volume <0..1>` sets the master volume.
-- `--net-probe ip:port` is a headless client that prints what it receives and
-  dumps captures to `tmp/` under the current directory. It is the netcode
-  debugging tool; details in [AGENTS.md](AGENTS.md).
-
-### Server
-
-```
-vcod-server mp_carentan --port 28960 --hostname "my server"
+# Or manually
+vcod-server mp_carentan --bots 4 --gametype dm
 vcod --connect 127.0.0.1:28960
 ```
 
-The server binds `0.0.0.0` and, like the retail server, answers `getstatus`
-from anyone and honours an out-of-band `disconnect` by source address. Run it
-on a LAN or behind a firewall you control. `--max-clients` sets
-`sv_maxclients` (default 8). `--test-entities <n>` adds `n` entities that
-move on the wire, one of which cycles in and out, to exercise the
-packet-entity path; they are not rendered by a retail client, only present
-to drive the encoding. 0 (the default) is off. `--bots <n>` adds `n` debug
-bots, each taking a real client slot: they join through the stock team menu,
-pick a weapon and wander the map (allies/axis alternating). `--bots-shoot`
-lets them fight: they engage the nearest enemy with a clear line of sight,
-tap fire paced by the weapon's `fireTime`, reload dry clips, throw a frag
-at close range and respawn on the use key. 0 (the default) is off.
-`--game-dir`, `--mod-dir` and
-`COD_DIR` work the same way as for the client.
+See `FRIENDS-ALPHA.md` for detailed installation and package layout.
 
-## Controls
+## Credits
 
-Click to capture the mouse, Esc to release it, mouse to look around.
+UNTITLED OFFENSIVE is built on [vcod](https://github.com/janost/vcod) by janost.
+vcod is a from-scratch Rust reimplementation of parts of Call of Duty (2003)
+patch 1.1, including the engine, rendering, networking and scripting
+groundwork. This project extends vcod toward a sandbox for classic Call of Duty
+gameplay, maps and systems.
 
-### Fly mode (default)
+Additional credits and lineage are in the [vcod README](https://github.com/janost/vcod#lineage-and-inspiration)
+and the original project's [NOTICE](NOTICE) file.
 
-| Input | Action |
-|---|---|
-| W / A / S / D | Move forward / left / back / right |
-| Space | Move up |
-| Ctrl | Move down |
-| Shift | Speed boost |
-| Scroll | Adjust fly speed |
+## Development
 
-### Playing (`--connect`)
+UNTITLED OFFENSIVE is developed with a mixture of manual work and AI-assisted
+development. AI tools are used for things like codebase inspection, research,
+debugging, implementation, testing and documentation. The direction of the
+project is decided manually, and changes are checked against the actual game
+and project before they are treated as working. Visual and gameplay changes
+also get human testing because passing a test does not necessarily mean
+something looks or plays correctly.
 
-The binds follow retail's `config_mp.cfg`, except the right mouse button,
-which retail binds to `toggle cl_run` and vcod uses for the sight.
-
-| Input | Action |
-|---|---|
-| W / A / S / D | Move forward / left / back / right |
-| Space | Stand up from crouch or prone; jump when standing |
-| C | Crouch |
-| Ctrl | Prone |
-| Q / E | Lean left / right (held) |
-| LMB | Fire (semi-automatic weapons fire once per click) |
-| RMB | Aim down the sight (held) |
-| R | Reload |
-| Shift | Melee |
-| F | Use: pick up a weapon, plant or defuse, respawn after a death |
-| 1 / 2 / 3 / 4 | Weapon slot: primary, second primary, pistol, grenade |
-| Scroll | Next / previous weapon |
-| Tab | Scoreboard (held) |
-
-The position is predicted from the latest snapshot while you play; while
-spectating, dead, following or at the intermission it comes from the
-server. As a spectator, Space rises while held and C sinks until Space is
-pressed. A map change on the server shows a loading screen (and downloads
-missing paks the way the connect does) and continues on the new map.
-
-| Input | Action |
-|---|---|
-| M | Open the main script menu: the team menu, or on stock gametypes the weapon menu once you have a team |
-| 0-9 | Pick the menu row bound to that key |
-| Up / Down, Enter | Move the menu selection, pick it |
-| Esc | Close the menu |
-
-While a menu is open these keys go to it, so the digits pick a row instead of
-a weapon, and Esc closes it rather than releasing the mouse; W / A / S / D
-still move.
-
-These work in every mode:
-
-| Input | Action |
-|---|---|
-| F3 | Toggle the debug overlay |
-| F4 | Culling: on, locked (freeze the visible set), off |
-
-### Walk mode (`--walk`)
-
-| Input | Action |
-|---|---|
-| W / A / S / D | Move forward / left / back / right |
-| Space | Jump (re-press to jump again, no autohop) |
-| Ctrl | Crouch (held) |
-| Z | Toggle prone |
-| Q / E | Lean left / right |
-| Shift | Slow walk |
-| LMB | Fire (hitscan, per-surface impact effect and tracer) |
-| RMB | Aim down sights (held) |
-| R | Reload |
-| 1-6 | Weapon: colt, thompson, mp40, mp44, enfield, kar98k |
-
-## Known limitations
-
-- Shadow-decal prop models (`shadow_tree_*`, `shadow_crate` and similar) draw
-  as coplanar, alpha-blended decals on the ground, depth-biased against
-  z-fighting.
-- Props are lit by the compiler's per-entity `lightingPrecalc` tint, one
-  colour for the whole model. The engine samples its light grid per vertex.
-- Shader scripts drive skies, water, blends, the `sunfile` sun disc and the
-  ocean's `deformVertexes wave`. What is left of the grammar: the other
-  `deformVertexes` forms parse and stay inert, and NV/ATI hardware-path
-  stages are dropped exactly as retail dropped them on machines without
-  those extensions. The script fog keywords (`fogvars` and friends) stay
-  inert too; no stock MP map sets fog from a script. The fog every map shows
-  is set by gsc and arrives on the wire in configstring 12, which vcod
-  renders.
-  Engine-generated `$dlight` bundle images and the ship's deckflag texture
-  have no file to load, so a generated light blob and a white pixel stand in
-  for them (neuville windows, mp_ship flag decks). Details in
-  [docs/research/cod11-shader-scripts.md](docs/research/cod11-shader-scripts.md).
-- Visibility follows the retail cells, portals, bevel planes and occluder
-  volumes. Three deliberate divergences draw a little more than retail:
-  clipped portal polygons narrower than a sliver epsilon are skipped, cells
-  whose top is below the eye are marked with the camera frustum instead of a
-  portal cone, and after the walk every cell sharing a portal with a visited
-  cell is frustum-tested to a fixpoint. Retail assumes nobody looks over a
-  cell's walls; the mp_ship decks prove otherwise. Outside every cell (fly
-  mode above the map) only the frustum culls.
-- Alpha-cutout surfaces without a clip bit (bushes, treelines, ground decals)
-  no longer collide; masked wire and iron fences carry PLAYERCLIP in the BSP
-  and still stop the player, but bullets pass them, as on a retail server.
-- Submodels (doors, exploding walls) collide by their brush hulls, but only
-  as static geometry: no entity-driven movers, so there is nothing to ride.
-- Movers do not block the predicted player: prediction clips the map and the
-  other players only.
-- Mounted MGs are usable on the server: mount, aim within the arc, fire and
-  dismount all replay retail's behavior
-  ([docs/research/cod11-turrets.md](docs/research/cod11-turrets.md)). The
-  vcod client does not draw them yet -- it renders the gun's `eType` (11) as
-  nothing.
-- The player HUD leaves out a few retail pieces: the followed player's
-  health, ammo and compass while following (only the script's HUD elements
-  are drawn then), friendly players on the compass, the weapon mode icon,
-  the stance-change flash, the mounted gun's own reticle (no crosshair is
-  drawn on a mounted gun), and the fixed-width fonts, which draw in the
-  proportional HUD font instead
-  ([docs/research/cod11-hud-protocol.md](docs/research/cod11-hud-protocol.md),
-  section 9).
-- Walk-mode bullet impacts resolve per surface through `fx/iw_impacts.csv`
-  like spectate does, plus tracers. No penetration, grenades or projectiles.
-- Walk mode carries six weapons on keys 1-6 (colt, thompson, mp40, mp44,
-  enfield, kar98k) with per-weapon viewmodel, anims, sounds and reserve
-  ammo; sniper scope overlays are not drawn.
-- No mantling - which retail 1.1 MP turns out not to have either; ledge hops
-  are plain jumps and step-ups (docs/research/cod11-mantle.md).
-- No doppler, matching retail: the 1.1 engine never sets a Miles velocity
-  (`docs/research/cod11-sound-system.md`, section 11). Occlusion is a vcod
-  addition the retail client does not have: a wall between the listener and an
-  emitter quiets it to about -12 dB.
-- Voice pools and priority stealing follow the retail engine: at most 32
-  spatial, 32 flat and 8 streamed voices, and a full pool evicts a lower-
-  priority victim instead of refusing the new sound.
-- Quick chat (`vsay`) is handled and inert on a stock install, exactly as
-  retail is: the `j`/`k`/`l` commands resolve against mod-provided `.voice`
-  tables, which no stock pak ships. The speaker's head icon is not drawn and
-  category strings display unlocalized. A sweep of three populated public
-  servers sent no `j`/`k`/`l` at all, so the path is unobserved live
-  ([docs/research/cod11-quick-chat.md](docs/research/cod11-quick-chat.md)).
-- Audio fidelity is matched to the retail engine on paper (falloff, panning,
-  channel replacement, ducking) but not yet confirmed by ear against the real
-  game.
-- Other players' footsteps are silent. They are not playerstate events, so
-  they travel by the entity path that does not exist yet. Your own
-  footsteps play off the prediction.
-- A prone body's pitch on sloped ground (`proneDirectionPitch`,
-  `proneTorsoPitch`) is not modelled. Both are animation inputs, so they
-  change how a prone body is drawn rather than how it moves, and no client
-  can see another player's body yet
-  ([docs/research/cod11-mantle.md](docs/research/cod11-mantle.md), "Prone"). `--test-entities` adds
-  entities that move on the wire so the packet-entity path (baselines,
-  moving deltas, removal and re-add) has something to exercise; they carry
-  no `eType` or model, so a retail client renders nothing for them, and
-  their encoding is round-trip tested, not pinned against a retail capture
-  the way the rest of the snapshot writer is, since no entity in the
-  captured frames ever moves.
-
-## Documentation
-
-- [docs/protocol-1.1.md](docs/protocol-1.1.md): the CoD 1.1 wire protocol,
-  both directions, with the list of every divergence from RTCW/Q3 at the end.
-- [docs/research/](docs/research/): per-subsystem notes recovered from the
-  binaries and confirmed live: the BSP, xmodel and xanim formats, the
-  clientState stream, the player model and animation system, the event and
-  effect tables, the efx grammar, the HUD protocol, the sound system, the
-  retail server's handshake, and the shader scripts. Each claim cites the
-  module and address it rests on and says whether it was verified live or
-  inferred.
-- [tools/re/](tools/re/): the small scripts used to pull tables out of the
-  binaries (event enum, netfield tables, xrefs, a Ghidra export script) and
-  the disassembly notes for the Linux server.
-- [AGENTS.md](AGENTS.md): working notes for contributors and coding agents:
-  layout, test setup, netcode debugging, the reverse-engineering workflow.
-
-## Lineage and inspiration
-
-- [Quake III Arena](https://github.com/id-Software/Quake-III-Arena) and
-  [Return to Castle Wolfenstein](https://github.com/id-Software/RTCW-MP) by
-  id Software, GPL. CoD1 is an RTCW-MP descendant and its netcode, movement
-  and animation code follow those sources closely. Where vcod ports a routine,
-  the comment names the file it came from.
-- [ioquake3](https://github.com/ioquake/ioq3), for a cleaner reading of the
-  same netcode.
-- [CoDExtended](https://github.com/xtnded/codextended), a GPL server
-  extension for CoD1 1.1 whose reverse-engineered struct layouts were the
-  starting point for the netfield tables.
-- [cod-asset-importer](https://github.com/mauserzjeh/cod-asset-importer),
-  a GPL Blender add-on for CoD assets; the xmodel triangle-strip decoder is
-  ported from it and the xmodel layout was cross-checked against it.
-- [wgpu](https://github.com/gfx-rs/wgpu), [winit](https://github.com/rust-windowing/winit)
-  and [kira](https://github.com/tesselode/kira) for graphics, windowing and audio.
+Reverse engineering and compatibility work is based on evidence from the
+original games, existing research, runtime behaviour and the code, rather
+than made-up assumptions.
 
 ## Legal
 
-vcod is not affiliated with or endorsed by Activision or Infinity Ward. Call
-of Duty is a trademark of Activision Publishing, Inc. This repository contains
-no game assets, no game code and no binaries from the game; it reads the files
-of a copy you own. The reverse engineering was done to interoperate with the
-game's own files and servers. The research notes document file formats and the
-network protocol for that purpose: they contain layouts and addresses
-recovered from the binaries, and no copied code. The screenshots above show
-art owned by Activision.
+UNTITLED OFFENSIVE is not affiliated with, endorsed by, or connected to
+Activision, Infinity Ward, Treyarch or any other Activision company.
+Call of Duty is a trademark of Activision Publishing, Inc.
 
-Quake III Arena and Return to Castle Wolfenstein are trademarks of id
-Software. Their GPL sources, and the other ported code, are credited in
-[NOTICE](NOTICE).
+No proprietary Call of Duty assets are distributed here. Users must provide
+content from legitimately owned installations.
 
-## License
-
-GPL-3.0-or-later; see [LICENSE](LICENSE). The network code was written with
-the RTCW (GPLv3) and Quake 3 (GPLv2-or-later) sources as reference, so the
-project is GPL to stay compatible with them.
+GPL-3.0-or-later; see [LICENSE](LICENSE).
