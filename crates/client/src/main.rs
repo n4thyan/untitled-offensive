@@ -1895,21 +1895,47 @@ impl App {
             Action::SelectClass(index) => {
                 if let Mode::Online {
                     net,
+                    join,
+                    menu_view,
                     screens,
                     screen_menu,
                     ..
                 } = &mut self.mode
                 {
-                    // The choice is queued for the next spawn, not applied now,
-                    // and the picker closes on a pick.
+                    // The server queues the class and applies it only through
+                    // the normal spawn path. If the player is still parked on
+                    // the stock pre-spawn weapon menu, answer that menu with
+                    // its currently highlighted valid weapon after queuing the
+                    // class. That releases the gametype's existing spawn
+                    // thread, and the queued class replaces the stock loadout
+                    // when that authoritative spawn is processed. Alive
+                    // players have no weapon menu here, so their class still
+                    // waits for the next legitimate respawn.
+                    let join_response = menu_view
+                        .as_ref()
+                        .filter(|(name, _)| name.starts_with("weapon_"))
+                        .and_then(|(_, view)| view.selected_response())
+                        .map(str::to_string);
+
                     log::info!("classes: selectclass {index}");
                     net.send_reliable(&format!("selectclass {index}"));
+
+                    if let Some(response) = join_response {
+                        if let Some(cmd) = join.choose(&response, net.server_id()) {
+                            log::info!(
+                                "classes: releasing pre-spawn weapon menu with {response:?}"
+                            );
+                            net.send_reliable(&cmd);
+                            *menu_view = None;
+                        }
+                    }
+
                     screens.close();
                     *screen_menu = None;
                 }
-                // If a stock join menu is still waiting underneath the class
-                // picker, leave the cursor released so that menu can resume.
-                // An alive player with no other modal UI returns to gameplay.
+                // If another stock menu is still waiting underneath the class
+                // picker, leave the cursor released. Otherwise a live player
+                // returns directly to gameplay.
                 let grab = self.gameplay_input_active();
                 self.set_grab(grab);
             }
