@@ -2061,8 +2061,10 @@ impl App {
                 self.local_server = Some(server);
                 self.connect_addr = Some(addr.clone());
                 self.mode = mode;
-                // The menu opens on Main over the connecting screen.
-                self.screen_open(hud::screens::Screen::Main);
+                // Connecting/loading own the whole frame. Keep client-owned
+                // screens closed here so the frontend cannot survive over the
+                // loading screen or the live map. Esc may open Pause only once
+                // the phase is actually Live.
                 self.set_grab(false);
                 if let Some(s) = &self.local_server {
                     log::info!(
