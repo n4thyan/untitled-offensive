@@ -28,7 +28,7 @@ struct Args {
     #[arg(long, default_value_t = 28960)]
     port: u16,
     /// sv_hostname
-    #[arg(long, default_value = "vcod")]
+    #[arg(long, default_value = "CoD - Untitled Offensive")]
     hostname: String,
     /// sv_maxclients
     #[arg(long, default_value_t = 8)]

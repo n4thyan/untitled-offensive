@@ -847,6 +847,38 @@ fn frontend_mode(registry: vcod_common::maplist::MapRegistry) -> Mode {
     }
 }
 
+/// Tear a match down to the worldless frontend.
+///
+/// This is the whole "leave match" contract in one place: every piece of
+/// per-match state is dropped so the frontend renders over an empty view with
+/// no live world, HUD or ambient behind it. It is a free function so the
+/// teardown can be tested without a window or a GPU - the renderer half is
+/// skipped when `renderer` is `None`, which is exactly the headless case.
+fn teardown_to_frontend(
+    fs: &Pk3Fs,
+    world: &mut Option<World>,
+    fx: &mut fx::sim::FxSystem,
+    hud: &mut Option<hud::Hud>,
+    audio: &mut audio::AudioSystem,
+    renderer: Option<&mut Renderer>,
+) -> Mode {
+    if let Some(r) = renderer {
+        r.unload_world();
+        r.set_viewmodel(fs, &[]);
+        r.set_fog(None, 0.0);
+        r.set_fx_quads(fs, Vec::new());
+        r.set_fx_lights(&[]);
+        r.set_hud_quads(fs, Vec::new());
+    }
+    *world = None;
+    fx.clear();
+    if let Some(hud) = hud {
+        hud.on_gamestate();
+    }
+    audio.set_ambient(fs, None);
+    frontend_mode(maplist_for(fs))
+}
+
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = Args::parse();
@@ -1003,7 +1035,7 @@ fn main() -> Result<()> {
         (
             online_mode(net, &fs, args.team.clone(), args.weapon.clone()),
             None,
-            "vcod — connecting".to_string(),
+            "CoD - UO — connecting".to_string(),
         )
     } else if startup == StartupKind::LocalMap {
         let (map, bsp) = local.expect("fly or walk without a local map");
@@ -1025,12 +1057,12 @@ fn main() -> Result<()> {
                 }
             })
         };
-        (mode, Some(World { bsp }), format!("vcod — {map}"))
+        (mode, Some(World { bsp }), format!("CoD - UO — {map}"))
     } else {
         (
             frontend_mode(maplist_for(&fs)),
             None,
-            "UNTITLED".to_string(),
+            "CoD - Untitled Offensive".to_string(),
         )
     };
 
@@ -1164,7 +1196,7 @@ fn start_loading(
     }
     audio.on_gamestate(&map);
     fx.clear();
-    *title = format!("vcod — loading {map}");
+    *title = format!("CoD - UO — loading {map}");
     if let Some(window) = window {
         window.set_title(title);
     }
@@ -1281,7 +1313,7 @@ fn load_map(
     // The ambient rides configstring 3 (docs/research/cod11-sound-system.md,
     // section 9); a fresh gamestate may have changed it.
     audio.set_ambient(fs, net::info_value_for_key(net.configstring(3), "n"));
-    *title = format!("vcod — {map}");
+    *title = format!("CoD - UO — {map}");
     if let Some(window) = window {
         window.set_title(title);
     }
@@ -1744,7 +1776,12 @@ impl App {
                     action = a;
                     consumed = true;
                 } else if code == KeyCode::KeyM {
-                    screens.open(hud::screens::Screen::Main);
+                    // Mid-match, M opens the pause menu, not the frontend's
+                    // main menu: a full UNTITLED/Play/Quit screen over a live
+                    // map reads as the frontend and is confusing, and it is
+                    // how the menu ended up drawn over a running match. The
+                    // pause menu is the in-match menu; Esc opens the same one.
+                    screens.open(hud::screens::Screen::Pause);
                     *screen_menu = screens.menu();
                     consumed = true;
                 }
@@ -2048,6 +2085,13 @@ impl App {
     /// Leave the current match: disconnect, stop a server the client started,
     /// and return to the menu-only mode. A server the client did not start is
     /// left alone - it is not this client's to stop.
+    ///
+    /// This tears the match down rather than merely hiding it. Every piece of
+    /// per-match state is dropped - the GPU world and sky, the collision BSP,
+    /// the fog, fx, the HUD's match state, the ambient loop, held keys and
+    /// mouse capture - so the frontend renders over an empty view with no live
+    /// map behind it. Persistent state (the profile, the class list, settings)
+    /// is deliberately not touched.
     fn leave_match(&mut self) {
         if let Mode::Online { net, .. } = &mut self.mode {
             net.disconnect();
@@ -2058,14 +2102,18 @@ impl App {
             log::info!("menu: left an external match (no local server to stop)");
         }
         self.connect_addr = None;
-        let screens = hud::screens::Screens::frontend(maplist_for(&self.fs));
-        let mut screens = Box::new(screens);
-        screens.open(hud::screens::Screen::Main);
-        let screen_menu = screens.menu();
-        self.mode = Mode::Menu {
-            screens,
-            screen_menu,
-        };
+
+        // Tear the match down rather than merely hiding it: the frontend must
+        // render over an empty view with no live map behind it.
+        let mode = teardown_to_frontend(
+            &self.fs,
+            &mut self.world,
+            &mut self.fx,
+            &mut self.hud,
+            &mut self.audio,
+            self.renderer.as_mut(),
+        );
+        self.mode = mode;
         self.set_grab(false);
         log::info!("menu: returned to the multiplayer menu");
     }
@@ -3580,6 +3628,40 @@ mod tests {
                 assert!(screen_menu.is_some());
             }
             _ => panic!("ordinary boot created gameplay state"),
+        }
+    }
+
+    /// Leaving a match destroys the world and every per-match resource, so the
+    /// frontend renders over an empty view. This is the lifecycle bug the QA
+    /// recording showed: the menu drawn over a still-live map.
+    #[test]
+    fn leaving_a_match_destroys_the_world_and_returns_a_worldless_frontend() {
+        let fs = Pk3Fs::empty();
+        let mut world = Some(World {
+            bsp: vcod_common::bsp::Bsp::empty(),
+        });
+        let mut fx = fx::sim::FxSystem::new();
+        let mut hud: Option<hud::Hud> = None;
+        let mut audio = audio::AudioSystem::new(
+            &fs,
+            audio::AudioOpts {
+                enabled: false,
+                volume: 1.0,
+            },
+        );
+
+        let mode = teardown_to_frontend(&fs, &mut world, &mut fx, &mut hud, &mut audio, None);
+
+        assert!(world.is_none(), "the collision world survived the teardown");
+        match mode {
+            Mode::Menu {
+                screens,
+                screen_menu,
+            } => {
+                assert_eq!(screens.current(), Some(hud::screens::Screen::Main));
+                assert!(screen_menu.is_some(), "the frontend has no menu to draw");
+            }
+            _ => panic!("leaving a match did not return the frontend"),
         }
     }
 

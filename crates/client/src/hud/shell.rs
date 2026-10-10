@@ -83,6 +83,11 @@ impl Row {
         !self.disabled && self.kind != RowKind::Divider
     }
 
+    /// Whether this row can be selected by the cursor, from outside the shell.
+    pub fn is_selectable(&self) -> bool {
+        self.selectable()
+    }
+
     /// The selected choice of a selector row.
     pub fn selected_choice(&self) -> Option<&str> {
         match &self.kind {
