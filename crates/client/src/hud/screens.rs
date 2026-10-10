@@ -945,17 +945,11 @@ mod tests {
     #[test]
     fn class_picker_back_returns_to_pause() {
         let mut ui = Ui::new(Screen::ClassPicker);
-        assert_eq!(
-            ui.key(MenuKey::Back),
-            Some(Action::Open(Screen::Pause))
-        );
+        assert_eq!(ui.key(MenuKey::Back), Some(Action::Open(Screen::Pause)));
 
         let mut ui = Ui::new(Screen::ClassPicker);
         ui.select_row("back");
-        assert_eq!(
-            ui.key(MenuKey::Activate),
-            Some(Action::Open(Screen::Pause))
-        );
+        assert_eq!(ui.key(MenuKey::Activate), Some(Action::Open(Screen::Pause)));
     }
 
     /// The class picker lists the profile's classes and selecting one names its
