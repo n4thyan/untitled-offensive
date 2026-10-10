@@ -462,11 +462,12 @@ impl Screens {
                 (Outcome::Activate(id.clone()), Some(self.action_for(&id)))
             }
             MenuKey::Back => {
-                // Esc backs out of a sub-screen to the main menu rather than
-                // all the way out, so the player is never dropped straight
-                // into gameplay from a settings screen.
+                // Back follows the screen hierarchy. The class picker belongs
+                // to the in-match pause menu, so returning from it must never
+                // expose the frontend Main screen over a live map.
                 let action = match self.current {
-                    Some(Screen::Play) | Some(Screen::ClassPicker) => Action::Open(Screen::Main),
+                    Some(Screen::Play) => Action::Open(Screen::Main),
+                    Some(Screen::ClassPicker) => Action::Open(Screen::Pause),
                     Some(Screen::Pause) => Action::Close,
                     Some(Screen::Main) if self.root_closable => Action::Close,
                     Some(Screen::Main) | None => Action::Nothing,
@@ -592,7 +593,8 @@ impl Screens {
                 None => Action::Nothing,
             },
             "back" => match self.current {
-                Some(Screen::Play) | Some(Screen::ClassPicker) => Action::Open(Screen::Main),
+                Some(Screen::Play) => Action::Open(Screen::Main),
+                Some(Screen::ClassPicker) => Action::Open(Screen::Pause),
                 _ => Action::Close,
             },
             "resume" => Action::Close,
@@ -936,6 +938,24 @@ mod tests {
         assert_eq!(ui.key(MenuKey::Back), Some(Action::Open(Screen::Main)));
         let mut ui = Ui::new(Screen::Main);
         assert_eq!(ui.key(MenuKey::Back), Some(Action::Close));
+    }
+
+    /// The class picker is a child of Pause. Back must return to Pause rather
+    /// than opening the frontend Main menu over a live match.
+    #[test]
+    fn class_picker_back_returns_to_pause() {
+        let mut ui = Ui::new(Screen::ClassPicker);
+        assert_eq!(
+            ui.key(MenuKey::Back),
+            Some(Action::Open(Screen::Pause))
+        );
+
+        let mut ui = Ui::new(Screen::ClassPicker);
+        ui.select_row("back");
+        assert_eq!(
+            ui.key(MenuKey::Activate),
+            Some(Action::Open(Screen::Pause))
+        );
     }
 
     /// The class picker lists the profile's classes and selecting one names its
