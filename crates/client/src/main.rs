@@ -1759,6 +1759,7 @@ impl App {
         let mut consumed = false;
         match &mut self.mode {
             Mode::Online {
+                phase,
                 screens,
                 screen_menu,
                 ..
@@ -1775,12 +1776,10 @@ impl App {
                     *screen_menu = Some(menu);
                     action = a;
                     consumed = true;
-                } else if code == KeyCode::KeyM {
+                } else if code == KeyCode::KeyM && matches!(phase, Phase::Live(_)) {
                     // Mid-match, M opens the pause menu, not the frontend's
-                    // main menu: a full UNTITLED/Play/Quit screen over a live
-                    // map reads as the frontend and is confusing, and it is
-                    // how the menu ended up drawn over a running match. The
-                    // pause menu is the in-match menu; Esc opens the same one.
+                    // main menu. Connecting and Loading deliberately ignore
+                    // it so no client-owned menu can leak over those phases.
                     screens.open(hud::screens::Screen::Pause);
                     *screen_menu = screens.menu();
                     consumed = true;
@@ -1886,9 +1885,12 @@ impl App {
             }
             Action::Close => {
                 self.screen_close();
-                // A menu closing restores gameplay input cleanly: no held key
-                // stays latched and the mouse is re-captured.
-                self.set_grab(true);
+                // Re-capture only when gameplay really owns input. A stock
+                // script menu may still be open underneath the client-owned
+                // screen (notably during pre-spawn class selection), and
+                // Connecting/Loading never own gameplay input.
+                let grab = self.gameplay_input_active();
+                self.set_grab(grab);
             }
             Action::SelectClass(index) => {
                 if let Mode::Online {
@@ -1905,7 +1907,11 @@ impl App {
                     screens.close();
                     *screen_menu = None;
                 }
-                self.set_grab(true);
+                // If a stock join menu is still waiting underneath the class
+                // picker, leave the cursor released so that menu can resume.
+                // An alive player with no other modal UI returns to gameplay.
+                let grab = self.gameplay_input_active();
+                self.set_grab(grab);
             }
             Action::OpenClassEditor => {
                 // The assembled profile, taken before the mode is borrowed
