@@ -203,10 +203,13 @@ impl PlayInput {
         }
     }
 
-    /// Lets go of every held key, for a grab release or focus loss. The
-    /// stance and a pending switch stay: neither is a held key.
+    /// Lets go of every held key and drops input edges that have not yet been
+    /// built into a command. Stance stays because it is level state, but a
+    /// queued or in-flight weapon request must not cross a modal transition.
     pub fn release_all(&mut self) {
         self.down.clear();
+        self.pending_requests.clear();
+        self.pending_weapon = None;
         self.jump_consumed_by_stand = false;
     }
 
@@ -584,9 +587,14 @@ mod tests {
         i.key(Action::Forward, true);
         i.key(Action::Attack, true);
         i.key(Action::Crouch, true);
+        i.key(Action::Slot(3), true);
         i.release_all();
         let c = i.build(100, &held(10));
         assert_eq!((c.forward, c.buttons), (0, 0));
+        assert_eq!(
+            c.weapon, 10,
+            "a queued switch must not cross a menu transition"
+        );
         assert_ne!(c.wbuttons & msg::WBUTTON_CROUCH, 0);
     }
 

@@ -7,6 +7,7 @@ pub mod font;
 pub mod hudelem;
 pub mod killfeed;
 pub mod menu;
+pub mod modal;
 pub mod player;
 pub mod scoreboard;
 pub mod screens;
@@ -19,14 +20,14 @@ use std::collections::{BTreeMap, HashMap};
 use crate::fx::registry::EV_OBITUARY;
 use crate::play::input::{EF_CROUCH, EF_PRONE};
 use vcod_common::localize::Localized;
+use vcod_common::net::NetEvent;
 use vcod_common::net::events::GameEvent;
 use vcod_common::net::msg::{ClientState, HudElem, PlayerState};
 use vcod_common::net::protocol::Protocol;
-use vcod_common::net::NetEvent;
 use vcod_common::pk3::Pk3Fs;
+use vcod_common::pmove::Stance;
 use vcod_common::pmove::predict::Predicted;
 use vcod_common::pmove::weapon::SpreadStance;
-use vcod_common::pmove::Stance;
 use vcod_common::weapon::WeaponDef;
 
 use chat::Chat;
@@ -85,22 +86,16 @@ pub struct HudFrame<'a> {
     pub snap_time: i32,
     /// Lazy weapon-file loads for killfeed icons.
     pub fs: &'a Pk3Fs,
-    /// The server's open script menu, if any; drawn on top of everything else.
-    pub menu: Option<&'a menu::MenuView>,
-    /// The Create-a-Class screen, when it is open. Drawn after the script
-    /// menu so a class edit is never hidden behind a team or weapon menu the
-    /// server still has up.
-    pub createaclass: Option<&'a createaclass::CreateAClass>,
+    /// The one modal presentation allowed to draw and own input this frame.
+    /// Map vote stays separate because it is a non-modal gameplay overlay.
+    pub modal: Option<modal::ModalRef<'a>>,
     /// The end-of-match map-vote panel, when a vote is open. Drawn over the
     /// intermission.
     pub vote: Option<&'a vote::VotePanel>,
     /// The map registry, so the vote panel can show friendly map names rather
     /// than raw ids. `None` outside a match.
     pub registry: Option<&'a vcod_common::maplist::MapRegistry>,
-    /// A client-owned menu screen (the main menu, the pause menu, the class
-    /// picker). Drawn on top of everything, including the script menu, because
-    /// it is the thing the player is deliberately looking at.
-    pub shell: Option<(&'a shell::Menu, &'a str)>,
+
     /// The newest snapshot's playerstate: ours, or the followed player's.
     /// Its hudelems are drawn whoever it belongs to.
     pub ps: Option<&'a PlayerState>,
@@ -275,7 +270,7 @@ impl Hud {
         // overrides CS 5/6 (status.rs).
         let status = status::read_status(f.configstrings, f.server_time, self.scoreboard.totals());
         // vcod's own header, which retail does not draw: spectators only.
-        if !f.local_player {
+        if f.ps.is_some() && !f.local_player {
             status::build(&status, &self.font_header, f.screen_w, &mut out);
         }
         if self.scoreboard.visible {
@@ -293,20 +288,8 @@ impl Hud {
                 &mut out,
             );
         }
-        // Also on top, and after the script menu: Create-a-Class is the thing
-        // the player is deliberately looking at.
-        if let Some(cac) = f.createaclass {
-            createaclass::build(
-                cac,
-                &self.font_text,
-                HUD_SCALE,
-                f.screen_w,
-                f.screen_h,
-                &mut out,
-            );
-        }
         // The end-of-match vote, over the intermission. Below the client-owned
-        // screens: a pause menu still owns the view.
+        // modal: a pause/script/class menu still owns the view.
         if let Some(panel) = f.vote {
             let name_of = |id: &str| -> String {
                 f.registry
@@ -324,29 +307,36 @@ impl Hud {
                 &mut out,
             );
         }
-        // Last, so the open menu sits on top of everything else.
-        if let Some(view) = f.menu {
-            menu::build(
-                view,
-                &self.font_text,
-                HUD_SCALE,
-                f.screen_w,
-                f.screen_h,
-                &mut out,
-            );
-        }
-        // And on top of that: a client-owned screen is modal, so nothing the
-        // server drew should show through it.
-        if let Some((menu, hint)) = f.shell {
-            shell::build(
-                menu,
-                &self.font_text,
-                HUD_SCALE,
-                f.screen_w,
-                f.screen_h,
-                hint,
-                &mut out,
-            );
+        // Exactly one modal variant can reach the renderer. It always draws
+        // last, above the world HUD and the non-modal vote overlay.
+        if let Some(modal) = &f.modal {
+            match modal {
+                modal::ModalRef::Shell(view) => shell::build(
+                    view,
+                    &self.font_text,
+                    HUD_SCALE,
+                    f.screen_w,
+                    f.screen_h,
+                    "UP/DOWN OR MOUSE   ENTER/CLICK SELECT   ESC BACK",
+                    &mut out,
+                ),
+                modal::ModalRef::Script(view) => menu::build(
+                    view,
+                    &self.font_text,
+                    HUD_SCALE,
+                    f.screen_w,
+                    f.screen_h,
+                    &mut out,
+                ),
+                modal::ModalRef::CreateAClass(view) => createaclass::build(
+                    view,
+                    &self.font_text,
+                    HUD_SCALE,
+                    f.screen_w,
+                    f.screen_h,
+                    &mut out,
+                ),
+            }
         }
         out
     }
@@ -451,11 +441,10 @@ mod tests {
             server_time: 0,
             snap_time: 0,
             fs,
-            menu: None,
-            createaclass: None,
+            modal: None,
             vote: None,
             registry: None,
-            shell: None,
+
             ps: Some(ps),
             predicted,
             local_player: true,

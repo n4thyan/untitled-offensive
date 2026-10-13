@@ -4,8 +4,9 @@
 ported into this project's Quake III / CoD1 (`IBSP` version 59) engine?
 **Method:** primary evidence — read the actual MW2 fastfiles shipped on this
 machine, decompress one, and read the source of the open-source tools that handle
-this format. Claims are marked **VERIFIED** (measured here), **SOURCED** (read from
-a tool's source or docs) or **INFERRED**.
+this format. **VERIFIED** marks measurements made here. **SOURCED** marks
+facts read from a tool's source or documentation. **INFERRED** marks conclusions
+drawn from that evidence.
 
 ---
 

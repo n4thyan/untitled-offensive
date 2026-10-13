@@ -136,23 +136,6 @@ impl Join {
         self.open = None;
     }
 
-    /// The M key: opens `g_scriptMainMenu`'s menu by looking its name up in
-    /// the script-menu configstring range.
-    pub fn open_main(&mut self, configstrings: &[String]) {
-        let Some(name) = self.cvars.get("g_scriptMainMenu", configstrings) else {
-            return;
-        };
-        let Some(index) = SCRIPT_MENUS
-            .clone()
-            .find(|&i| configstrings.get(i) == Some(&name))
-        else {
-            return;
-        };
-        self.open = Some(OpenMenu {
-            index: (index - SCRIPT_MENUS.start) as i32,
-            name,
-        });
-    }
 
     /// A new gamestate reruns retail's `ClientConnect`, which puts the
     /// client back on the menus (`JoinProbe::rearm`).
@@ -265,11 +248,4 @@ mod tests {
         assert!(j.open().is_none());
     }
 
-    #[test]
-    fn m_opens_the_main_menu() {
-        let mut j = Join::new(None, None);
-        j.on_server_command(&toks("v g_scriptMainMenu weapon_russian"), &cs(), 3);
-        j.open_main(&cs());
-        assert_eq!(j.open().unwrap().index, 1);
-    }
 }

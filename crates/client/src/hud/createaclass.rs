@@ -16,8 +16,8 @@
 
 use vcod_common::classes::{Class, ClassSlot, Profile};
 
-use super::font::{self, Font};
 use super::HudQuad;
+use super::font::{self, Font};
 
 /// One editable cell: the slot it fills and the candidates it offers.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,6 +53,10 @@ pub struct CreateAClass {
     /// The class name being edited, and which class of the profile it is.
     pub class_name: String,
     pub class_index: usize,
+    /// Per-class drafts copied from the last authoritative profile. Keeping
+    /// them separate means switching tabs cannot make an edit leak into a
+    /// different class while the server echo is in flight.
+    classes: Vec<Class>,
     /// Set when the profile has nothing to show yet.
     pub empty: bool,
     /// The last refusal the server sent, shown until the next edit.
@@ -62,7 +66,7 @@ pub struct CreateAClass {
 /// A row of the grid: the slots that sit side by side.
 const COLUMNS: usize = 3;
 impl CreateAClass {
-    /// A fresh screen over the eight slots Create-a-Class fills.
+    /// A fresh screen over the six slots in the shared class model.
     pub fn new(
         primaries: Vec<String>,
         secondaries: Vec<String>,
@@ -70,24 +74,14 @@ impl CreateAClass {
         perks: Vec<String>,
     ) -> CreateAClass {
         let mut cells = Vec::new();
-        for s in [
-            ClassSlot::Primary,
-            ClassSlot::Primary,
-            ClassSlot::Primary,
-            ClassSlot::Secondary,
-            ClassSlot::Secondary,
-            ClassSlot::Secondary,
-            ClassSlot::Equipment,
-        ] {
+        for s in ClassSlot::ALL {
             let choices = match s {
                 ClassSlot::Primary => primaries.clone(),
                 ClassSlot::Secondary => secondaries.clone(),
-                _ => equipment.clone(),
+                ClassSlot::Equipment => equipment.clone(),
+                ClassSlot::Perk1 | ClassSlot::Perk2 | ClassSlot::Perk3 => perks.clone(),
             };
             cells.push(Cell::new(s, choices));
-        }
-        for _ in 0..4 {
-            cells.push(Cell::new(ClassSlot::Perk1, perks.clone()));
         }
         CreateAClass {
             cells,
@@ -95,6 +89,7 @@ impl CreateAClass {
             choice: 0,
             class_name: "Custom".to_string(),
             class_index: 0,
+            classes: Vec::new(),
             empty: true,
             notice: None,
         }
@@ -163,6 +158,28 @@ impl CreateAClass {
         self.move_cursor(COLUMNS as isize);
     }
 
+    /// Select the cell under a window-space pointer. Geometry is shared with
+    /// the renderer so visible boxes and click targets cannot drift apart.
+    pub fn hover(&mut self, x: f32, y: f32, screen_w: f32, screen_h: f32) -> bool {
+        let ps = screen_h / REF_H;
+        let panel_x = (screen_w - PANEL_W * ps) / 2.0;
+        let panel_y = (screen_h - PANEL_H * ps) / 2.0;
+        for i in 0..self.cells.len() {
+            let col = i % COLUMNS;
+            let row = i / COLUMNS;
+            let left = panel_x + (CELL_X + (CELL_W + CELL_GAP_X) * col as f32) * ps;
+            let top = panel_y + (CELL_Y + (CELL_H + CELL_GAP_Y) * row as f32) * ps;
+            if x >= left && x < left + CELL_W * ps && y >= top && y < top + CELL_H * ps {
+                if self.selected != i {
+                    self.selected = i;
+                    self.choice = 0;
+                }
+                return true;
+            }
+        }
+        false
+    }
+
     /// Step the highlighted candidate. Wraps, so a player can reach every
     /// option without knowing how many there are.
     pub fn cycle_choice(&mut self, delta: isize) {
@@ -185,25 +202,31 @@ impl CreateAClass {
 
     /// Commit the highlighted candidate into the draft. Returns what the
     /// server should be told, or `None` when nothing changed.
-    pub fn commit(&mut self) -> Option<(&'static str, String)> {
+    pub fn commit(&mut self) -> Option<(usize, &'static str, String)> {
         let value = self.highlighted()?.to_string();
         let cell = self.cells.get_mut(self.selected)?;
         if cell.value.as_deref() == Some(value.as_str()) {
             return None;
         }
         cell.value = Some(value.clone());
+        if let Some(class) = self.classes.get_mut(self.class_index) {
+            class.set(cell.slot, value.clone());
+        }
         self.notice = None;
-        Some((cell.slot.key(), value))
+        Some((self.class_index, cell.slot.key(), value))
     }
 
     /// Clear the selected slot.
-    pub fn clear(&mut self) -> Option<(&'static str, String)> {
+    pub fn clear(&mut self) -> Option<(usize, &'static str, String)> {
         let cell = self.cells.get_mut(self.selected)?;
         if cell.value.take().is_none() {
             return None;
         }
+        if let Some(class) = self.classes.get_mut(self.class_index) {
+            class.set(cell.slot, "");
+        }
         self.notice = None;
-        Some((cell.slot.key(), String::new()))
+        Some((self.class_index, cell.slot.key(), String::new()))
     }
 
     /// Whether the draft has enough in it to spawn with: a primary or a
@@ -224,28 +247,69 @@ impl CreateAClass {
     /// blank, and `load` is the landing point for that work.
     #[allow(dead_code)]
     pub fn load(&mut self, profile: &Profile, index: usize) {
-        self.class_name = profile.name.clone();
-        self.class_index = index;
-        let Some(class) = profile.classes.get(index) else {
+        self.classes = profile.classes.clone();
+        self.load_class(index);
+    }
+
+    fn load_class(&mut self, index: usize) {
+        for cell in &mut self.cells {
+            cell.value = None;
+        }
+        let Some(class) = self.classes.get(index) else {
             self.empty = true;
             return;
         };
+        self.class_name = class.name.clone();
+        self.class_index = index;
         self.empty = false;
         for cell in &mut self.cells {
             cell.value = class.get(cell.slot).map(str::to_string);
         }
-        // Highlight whatever each cell already holds, so the grid reads as
-        // the saved class rather than as every cell being on its first option.
-        for cell in &mut self.cells {
-            self.choice = 0;
-            if let Some(v) = &cell.value {
-                if let Some(i) = cell.choices.iter().position(|c| c == v) {
-                    self.choice = i;
-                }
-            }
-        }
-        self.selected = 0;
+        self.selected = self.selected.min(self.cells.len().saturating_sub(1));
         self.choice = 0;
+    }
+
+    /// Switch to another independently stored class, wrapping at both ends.
+    pub fn switch_class(&mut self, delta: isize) -> bool {
+        if self.classes.len() < 2 {
+            return false;
+        }
+        let next =
+            (self.class_index as isize + delta).rem_euclid(self.classes.len() as isize) as usize;
+        self.load_class(next);
+        true
+    }
+
+    pub fn class_count(&self) -> usize {
+        self.classes.len()
+    }
+
+    /// Which visible class-selector arrow a pointer is over.
+    pub fn class_selector_direction(
+        &self,
+        x: f32,
+        y: f32,
+        screen_w: f32,
+        screen_h: f32,
+    ) -> Option<isize> {
+        if self.classes.len() < 2 {
+            return None;
+        }
+        let ps = screen_h / REF_H;
+        let panel_x = (screen_w - PANEL_W * ps) / 2.0;
+        let panel_y = (screen_h - PANEL_H * ps) / 2.0;
+        let local_x = (x - panel_x) / ps;
+        let local_y = (y - panel_y) / ps;
+        if !(CLASS_Y - 14.0..=CLASS_Y + 14.0).contains(&local_y) {
+            return None;
+        }
+        if (CLASS_X..=CLASS_X + 36.0).contains(&local_x) {
+            Some(-1)
+        } else if (PANEL_W - CLASS_X - 36.0..=PANEL_W - CLASS_X).contains(&local_x) {
+            Some(1)
+        } else {
+            None
+        }
     }
 
     /// The draft as a class, for the client's own view of what it built.
@@ -265,20 +329,22 @@ impl CreateAClass {
 /// Panel geometry, in the 480-line reference space the menu uses, so the two
 /// screens agree on where a panel sits.
 const PANEL_W: f32 = 448.0;
-const PANEL_H: f32 = 288.0;
+const PANEL_H: f32 = 280.0;
 const REF_H: f32 = 480.0;
 const TITLE_Y: f32 = 24.0;
+const CLASS_X: f32 = 24.0;
+const CLASS_Y: f32 = 60.0;
 const CELL_X: f32 = 24.0;
-const CELL_Y: f32 = 64.0;
+const CELL_Y: f32 = 92.0;
 const CELL_W: f32 = 132.0;
 const CELL_H: f32 = 52.0;
 const CELL_GAP_X: f32 = 12.0;
 const CELL_GAP_Y: f32 = 8.0;
-const LABEL_SIZE: f32 = 0.34;
-const VALUE_SIZE: f32 = 0.4;
+const LABEL_SIZE: f32 = 0.7;
+const VALUE_SIZE: f32 = 0.72;
 const SELECTED: [f32; 4] = [1.0, 0.8, 0.2, 1.0];
 const DIM: [f32; 4] = [0.55, 0.55, 0.55, 1.0];
-const HINT_SIZE: f32 = 0.36;
+const HINT_SIZE: f32 = 0.68;
 
 /// The label a slot shows, in the order the grid lays them out.
 fn slot_label(slot: ClassSlot) -> &'static str {
@@ -292,14 +358,6 @@ fn slot_label(slot: ClassSlot) -> &'static str {
     }
 }
 
-/// The number a perk cell shows, so the four perk slots read as 1-4 rather
-/// than as four identical "PERK" rows.
-fn perk_number(index: usize) -> &'static str {
-    match index {
-        7 => "PERK 4",
-        _ => "PERK",
-    }
-}
 
 /// Draw the grid. `font` is the text face, `scale` the HUD scale.
 pub fn build(
@@ -317,15 +375,60 @@ pub fn build(
     let y = (screen_h - h) / 2.0;
     let ts = scale * ps;
 
+    out.push(HudQuad {
+        verts: [[x, y], [x + w, y], [x + w, y + h], [x, y + h]],
+        uvs: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+        rgba: [0.0, 0.0, 0.0, 0.78],
+        texture: "white".to_string(),
+    });
+
     font::layout(
         font,
-        &format!("CREATE-A-CLASS  {}", view.class_name),
+        "CREATE A CLASS",
         x + CELL_X * ps,
         y + TITLE_Y * ps,
         ts,
         font::COLORS[7],
         out,
     );
+
+    let class_heading = format!(
+        "CLASS {} / {}   {}",
+        view.class_index + 1,
+        view.class_count().max(1),
+        view.class_name
+    );
+    let class_scale = ts * 0.78;
+    let heading_w = font::measure(font, &class_heading, class_scale);
+    font::layout(
+        font,
+        &class_heading,
+        x + (w - heading_w) / 2.0,
+        y + CLASS_Y * ps,
+        class_scale,
+        SELECTED,
+        out,
+    );
+    if view.class_count() > 1 {
+        font::layout(
+            font,
+            "<",
+            x + CLASS_X * ps,
+            y + CLASS_Y * ps,
+            class_scale,
+            SELECTED,
+            out,
+        );
+        font::layout(
+            font,
+            ">",
+            x + (PANEL_W - CLASS_X - 10.0) * ps,
+            y + CLASS_Y * ps,
+            class_scale,
+            SELECTED,
+            out,
+        );
+    }
 
     for (i, cell) in view.cells.iter().enumerate() {
         let col = i % COLUMNS;
@@ -342,17 +445,12 @@ pub fn build(
             verts: [[cx, cy], [cx + cw, cy], [cx + cw, cy + ch], [cx, cy + ch]],
             uvs: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
             rgba: [border[0] * 0.35, border[1] * 0.35, border[2] * 0.35, 0.55],
-            texture: "ui_mp/assets/white".to_string(),
+            texture: "white".to_string(),
         });
 
-        let label = if matches!(cell.slot, ClassSlot::Perk1) && cell.choices.len() > 3 {
-            perk_number(i)
-        } else {
-            slot_label(cell.slot)
-        };
         font::layout(
             font,
-            label,
+            slot_label(cell.slot),
             cx + 6.0 * ps,
             cy + 6.0 * ps,
             ts * LABEL_SIZE,
@@ -389,17 +487,24 @@ pub fn build(
         (None, false) if !view.is_playable() => {
             "Needs a primary or secondary to spawn with.".to_string()
         }
-        (None, false) => {
-            "Arrows move  W/S choose  Enter take  Bksp clear  Tab save  Esc close".to_string()
-        }
+        (None, false) => "Q/E class  Arrows slot  W/S value  Enter apply".to_string(),
     };
     font::layout(
         font,
         &hint,
         x + CELL_X * ps,
-        y + (PANEL_H - 26.0) * ps,
+        y + (PANEL_H - 44.0) * ps,
         ts * HINT_SIZE,
         font::COLORS[7],
+        out,
+    );
+    font::layout(
+        font,
+        "BACKSPACE CLEAR   TAB SAVE   ESC BACK",
+        x + CELL_X * ps,
+        y + (PANEL_H - 24.0) * ps,
+        ts * HINT_SIZE,
+        DIM,
         out,
     );
 }
@@ -431,19 +536,15 @@ mod tests {
         )
     }
 
-    /// The grid is the shape Create-a-Class promises: three primaries, three
-    /// secondaries, one equipment, four perks.
+    /// The editor mirrors the shared class model exactly. Repeating a visual
+    /// cell for one slot would make two controls overwrite the same value.
     #[test]
-    fn the_grid_is_three_three_one_and_four() {
+    fn the_grid_has_each_real_class_slot_exactly_once() {
         let s = screen();
-        let count = |slot: ClassSlot| s.cells.iter().filter(|c| c.slot == slot).count();
-        assert_eq!(count(ClassSlot::Primary), 3);
-        assert_eq!(count(ClassSlot::Secondary), 3);
-        assert_eq!(count(ClassSlot::Equipment), 1);
+        assert_eq!(s.cells.len(), ClassSlot::ALL.len());
         assert_eq!(
-            s.cells.len(),
-            11,
-            "8 slots shown; 3 more primaries fill the grid"
+            s.cells.iter().map(|cell| cell.slot).collect::<Vec<_>>(),
+            ClassSlot::ALL
         );
     }
 
@@ -464,7 +565,7 @@ mod tests {
         let mut s = screen();
         s.selected = 0;
         s.choice = 1; // thompson_mp
-        assert_eq!(s.commit(), Some(("primary", "thompson_mp".to_string())));
+        assert_eq!(s.commit(), Some((0, "primary", "thompson_mp".to_string())));
         assert_eq!(s.commit(), None, "the second take changes nothing");
     }
 
@@ -480,6 +581,132 @@ mod tests {
         assert_eq!(s.selected, s.cells.len() - COLUMNS);
         s.down();
         assert_eq!(s.selected, 0);
+    }
+
+    #[test]
+    fn pointer_hitboxes_follow_both_rendered_rows() {
+        let mut s = screen();
+        let ps = 720.0 / REF_H;
+        let panel_x = (1280.0 - PANEL_W * ps) / 2.0;
+        let panel_y = (720.0 - PANEL_H * ps) / 2.0;
+        let x = panel_x + (CELL_X + 4.0) * ps;
+        let y = panel_y + (CELL_Y + (CELL_H + CELL_GAP_Y) + 4.0) * ps;
+        assert!(s.hover(x, y, 1280.0, 720.0));
+        assert_eq!(s.selected, 3, "the second row is clickable at 720p");
+    }
+
+    #[test]
+    fn perk_cells_use_the_three_distinct_model_slots() {
+        assert_eq!(
+            screen().cells[3..]
+                .iter()
+                .map(|cell| cell.slot)
+                .collect::<Vec<_>>(),
+            vec![ClassSlot::Perk1, ClassSlot::Perk2, ClassSlot::Perk3]
+        );
+    }
+
+    #[test]
+    fn edits_name_the_class_index_they_belong_to() {
+        let mut profile = Profile {
+            name: "vcod".into(),
+            classes: vec![Class::new("Rifleman"), Class::new("Support")],
+        };
+        profile.classes[0].set(ClassSlot::Primary, "m1garand_mp");
+        profile.classes[1].set(ClassSlot::Primary, "thompson_mp");
+        let mut s = screen();
+        s.load(&profile, 1);
+        s.selected = 0;
+        s.choice = 0;
+        assert_eq!(
+            s.commit(),
+            Some((1, "primary", "m1garand_mp".to_string()))
+        );
+    }
+
+    #[test]
+    fn switching_classes_keeps_each_classes_draft_separate() {
+        let mut first = Class::new("Rifleman");
+        first.set(ClassSlot::Primary, "m1garand_mp");
+        let mut second = Class::new("Support");
+        second.set(ClassSlot::Primary, "thompson_mp");
+        let profile = Profile {
+            name: "vcod".into(),
+            classes: vec![first, second],
+        };
+        let mut s = screen();
+        s.load(&profile, 0);
+        assert_eq!(s.cells[0].value.as_deref(), Some("m1garand_mp"));
+        assert!(s.switch_class(1));
+        assert_eq!(s.class_index, 1);
+        assert_eq!(s.class_name, "Support");
+        assert_eq!(s.cells[0].value.as_deref(), Some("thompson_mp"));
+        assert!(s.switch_class(-1));
+        assert_eq!(s.cells[0].value.as_deref(), Some("m1garand_mp"));
+    }
+
+    #[test]
+    fn all_ten_class_positions_are_independently_reachable() {
+        let classes = (0..vcod_common::classes::MAX_CLASSES)
+            .map(|index| {
+                let mut class = Class::new(format!("Class {}", index + 1));
+                class.set(
+                    ClassSlot::Primary,
+                    if index % 2 == 0 {
+                        "m1garand_mp"
+                    } else {
+                        "thompson_mp"
+                    },
+                );
+                class
+            })
+            .collect();
+        let mut s = screen();
+        s.load(
+            &Profile {
+                name: "vcod".into(),
+                classes,
+            },
+            0,
+        );
+
+        assert_eq!(s.class_count(), vcod_common::classes::MAX_CLASSES);
+        for expected in 1..vcod_common::classes::MAX_CLASSES {
+            assert!(s.switch_class(1));
+            assert_eq!(s.class_index, expected);
+            assert_eq!(s.class_name, format!("Class {}", expected + 1));
+        }
+        assert!(s.switch_class(1));
+        assert_eq!(s.class_index, 0, "the tenth position wraps to the first");
+    }
+
+    #[test]
+    fn class_selector_arrows_have_matching_mouse_targets() {
+        let mut s = screen();
+        s.load(
+            &Profile {
+                name: "vcod".into(),
+                classes: vec![Class::new("One"), Class::new("Two")],
+            },
+            0,
+        );
+        let ps = 720.0 / REF_H;
+        let panel_x = (1280.0 - PANEL_W * ps) / 2.0;
+        let panel_y = (720.0 - PANEL_H * ps) / 2.0;
+        let y = panel_y + CLASS_Y * ps;
+        assert_eq!(
+            s.class_selector_direction(panel_x + CLASS_X * ps, y, 1280.0, 720.0),
+            Some(-1)
+        );
+        assert_eq!(
+            s.class_selector_direction(
+                panel_x + (PANEL_W - CLASS_X) * ps,
+                y,
+                1280.0,
+                720.0
+            ),
+            Some(1)
+        );
     }
 
     /// Cycling a cell's candidates wraps, so the last option is reachable
@@ -502,7 +729,7 @@ mod tests {
         s.selected = 0;
         s.choice = 0;
         s.commit();
-        assert_eq!(s.clear(), Some(("primary", String::new())));
+        assert_eq!(s.clear(), Some((0, "primary", String::new())));
         assert!(s.cells[0].value.is_none());
         assert_eq!(s.clear(), None, "clearing an empty cell changes nothing");
     }
@@ -513,7 +740,7 @@ mod tests {
     fn a_draft_with_no_weapon_is_not_playable() {
         let mut s = screen();
         assert!(!s.is_playable());
-        s.selected = 3; // a secondary
+        s.selected = 1; // secondary
         s.choice = 0;
         s.commit();
         assert!(s.is_playable(), "a pistol alone is a valid loadout");
@@ -564,7 +791,7 @@ mod tests {
         s.selected = 0;
         s.choice = 1;
         s.commit();
-        s.selected = 6; // equipment
+        s.selected = 2; // equipment
         s.choice = 0;
         s.commit();
         let class = s.to_class();

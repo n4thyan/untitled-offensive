@@ -261,6 +261,40 @@ pub struct Bsp {
 }
 
 impl Bsp {
+    /// A map with no geometry: every lump empty. The starting point for a
+    /// synthetic world in a test, and what a caller with no map holds.
+    pub fn empty() -> Bsp {
+        Bsp {
+            materials: vec![],
+            lightmaps: vec![],
+            soups: vec![],
+            verts: vec![],
+            indices: vec![],
+            entities: String::new(),
+            planes: vec![],
+            brush_sides: vec![],
+            brushes: vec![],
+            models: vec![],
+            cull_groups: vec![],
+            cull_indices: vec![],
+            portal_verts: vec![],
+            occluders: vec![],
+            occluder_plane_indices: vec![],
+            occluder_edges: vec![],
+            occluder_indices: vec![],
+            aabb_nodes: vec![],
+            cells: vec![],
+            portals: vec![],
+            nodes: vec![],
+            leafs: vec![],
+            pvs: None,
+            terrain: vec![],
+            patches: vec![],
+            collision_verts: vec![],
+            collision_indices: vec![],
+        }
+    }
+
     /// The tree and table a server needs to decide who can see what, without
     /// keeping the whole map: the lightmaps alone are megabytes.
     pub fn visibility(&self) -> Visibility {

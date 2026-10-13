@@ -305,31 +305,48 @@ impl Classes {
     }
 
     /// Put a slot in the active class, creating the class if the profile has
-    /// none yet. `false` when the value is rejected by `sanitize_value`.
+    /// none yet. Kept for non-UI callers; Create-a-Class uses `set_slot_at` so
+    /// editing one tab cannot mutate whichever class happens to be active.
     pub fn set_slot(&mut self, name: &str, slot: ClassSlot, value: &str) -> bool {
         let value = vcod_common::classes::sanitize_value(value);
         if value.is_empty() {
             return false;
         }
-        // Slot edits always target the active class, so a player picking a
-        // weapon is filling in the class they will spawn with. Read the index
-        // before the mutable borrow of the profile.
         let index = self
             .active
             .get(&name.to_ascii_lowercase())
             .copied()
             .unwrap_or(0);
-        let profile = self.profile_mut(name);
-        if profile.classes.is_empty() {
-            profile.classes.push(Class::new("Custom"));
+        if !self.has_profile(name) {
+            let profile = Profile {
+                name: name.to_string(),
+                classes: vec![Class::new("Custom")],
+            };
+            self.insert(name, profile);
         }
-        let index = index.min(profile.classes.len().saturating_sub(1));
-        if let Some(class) = profile.classes.get_mut(index) {
-            class.set(slot, value);
-            true
-        } else {
-            false
+        self.set_slot_at(name, index, slot, &value)
+    }
+
+    /// Edit one explicit class. The index is never inferred from the active or
+    /// pending spawn choice. An empty value intentionally clears that slot.
+    pub fn set_slot_at(
+        &mut self,
+        name: &str,
+        index: usize,
+        slot: ClassSlot,
+        value: &str,
+    ) -> bool {
+        let value = vcod_common::classes::sanitize_value(value);
+        if !self.has_profile(name) {
+            let mut profile = self.default.clone();
+            profile.name = name.to_string();
+            self.insert(name, profile);
         }
+        let Some(class) = self.profile_mut(name).classes.get_mut(index) else {
+            return false;
+        };
+        class.set(slot, value);
+        true
     }
 
     /// Write a profile back to `<dir>/<key>.txt`, so an edit survives the
@@ -741,6 +758,65 @@ mod tests {
             c.profile("newbie").classes[0].get(ClassSlot::Primary),
             Some("thompson_mp")
         );
+    }
+
+    #[test]
+    fn indexed_edits_change_only_the_named_class_and_can_clear_it() {
+        let mut first = Class::new("Rifleman");
+        first.set(ClassSlot::Primary, "m1garand_mp");
+        let mut second = Class::new("Support");
+        second.set(ClassSlot::Primary, "bar_mp");
+        let mut c = Classes::new(None);
+        c.insert(
+            "nathan",
+            Profile {
+                name: "Nathan".into(),
+                classes: vec![first, second],
+            },
+        );
+
+        assert!(c.set_slot_at("nathan", 1, ClassSlot::Secondary, "colt_mp"));
+        assert_eq!(
+            c.profile("nathan").classes[0].get(ClassSlot::Secondary),
+            None
+        );
+        assert_eq!(
+            c.profile("nathan").classes[1].get(ClassSlot::Secondary),
+            Some("colt_mp")
+        );
+        assert!(c.set_slot_at("nathan", 1, ClassSlot::Primary, ""));
+        assert_eq!(c.profile("nathan").classes[1].get(ClassSlot::Primary), None);
+        assert!(!c.set_slot_at("nathan", 2, ClassSlot::Primary, "sten_mp"));
+    }
+
+    #[test]
+    fn indexed_edits_reach_all_ten_bounded_class_positions() {
+        let classes = (0..vcod_common::classes::MAX_CLASSES)
+            .map(|index| Class::new(format!("Class {}", index + 1)))
+            .collect();
+        let mut c = Classes::new(None);
+        c.insert(
+            "nathan",
+            Profile {
+                name: "Nathan".into(),
+                classes,
+            },
+        );
+
+        for index in 0..vcod_common::classes::MAX_CLASSES {
+            assert!(c.set_slot_at("nathan", index, ClassSlot::Perk1, "perk_bandolier"));
+        }
+        assert!(c
+            .profile("nathan")
+            .classes
+            .iter()
+            .all(|class| class.get(ClassSlot::Perk1) == Some("perk_bandolier")));
+        assert!(!c.set_slot_at(
+            "nathan",
+            vcod_common::classes::MAX_CLASSES,
+            ClassSlot::Perk1,
+            "perk_bandolier"
+        ));
     }
 
     /// A class chosen while alive is queued, not applied: this is the exploit

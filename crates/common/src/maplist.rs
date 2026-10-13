@@ -149,6 +149,19 @@ impl PlayableMap {
     pub fn has_credit(&self) -> bool {
         !self.author.is_empty()
     }
+
+    /// The label a map selector shows: the display name, plus a visible marker
+    /// when the map has not been through a runtime verification pass. An
+    /// available-but-unverified map is labelled rather than hidden, so a
+    /// player can tell the two apart without the map vanishing from its own
+    /// source playlist.
+    pub fn playlist_label(&self) -> String {
+        if self.verified {
+            self.name.clone()
+        } else {
+            format!("{} [ALPHA / UNVERIFIED]", self.name)
+        }
+    }
 }
 
 /// The credit shown when a readme names no author. Never invented: a map with
@@ -510,6 +523,14 @@ pub struct Playlist {
     pub default_bots: usize,
     pub map_vote_enabled: bool,
     /// Whether a map must be verified to appear in this playlist.
+    ///
+    /// This gates the *curated* pools (Quick Play, the friends release): a map
+    /// that has not been through a runtime pass is kept out. A dedicated
+    /// source playlist (`classic`, `community_classics`, `iw_classics`) sets
+    /// this false so every *available* map from its own source is exposed,
+    /// verified or not - an installed map is never silently dropped from its
+    /// own playlist. Verification then shows up as the `[ALPHA / UNVERIFIED]`
+    /// marker from [`PlayableMap::playlist_label`] rather than as removal.
     pub require_verified: bool,
 }
 
@@ -525,17 +546,19 @@ pub const PLAYLISTS: &[Playlist] = &[
         gametypes: &["dm", "tdm"],
         default_bots: 8,
         map_vote_enabled: true,
-        require_verified: true,
+        // Stock maps are the verified baseline, but the playlist still shows
+        // every stock map that is installed rather than gating on the flag.
+        require_verified: false,
     },
     Playlist {
         id: "community_classics",
         display_name: "Community Classics",
-        description: "Verified native Call of Duty 1 community maps.",
+        description: "Call of Duty 1 community maps.",
         sources: &[SourceType::CustomCod1],
         gametypes: &["dm", "tdm"],
         default_bots: 8,
         map_vote_enabled: true,
-        require_verified: true,
+        require_verified: false,
     },
     Playlist {
         id: "quick_play",
@@ -550,12 +573,12 @@ pub const PLAYLISTS: &[Playlist] = &[
     Playlist {
         id: "iw_classics",
         display_name: "IW Classics",
-        description: "Verified maps from later Infinity Ward titles.",
+        description: "Maps from later Infinity Ward titles.",
         sources: &[SourceType::Iw4Native],
         gametypes: &["dm", "tdm"],
         default_bots: 8,
         map_vote_enabled: true,
-        require_verified: true,
+        require_verified: false,
     },
 ];
 
@@ -863,9 +886,10 @@ mod tests {
         assert!(!unknown.verified);
     }
 
-    /// The playlists partition by source and honour the verification gate.
+    /// Dedicated source playlists expose every available map from their own
+    /// source, verified or not; only the curated pool requires verification.
     #[test]
-    fn playlists_filter_by_source_and_verification() {
+    fn dedicated_playlists_expose_available_maps_and_quick_play_requires_verification() {
         let r = MapRegistry::from_ids(&[
             "mp_carentan",
             "mp_stanjel",
@@ -881,12 +905,29 @@ mod tests {
             r.in_playlist(p).iter().map(|m| m.id.clone()).collect()
         };
         assert_eq!(ids(classic), vec!["mp_carentan"]);
-        assert_eq!(ids(community), vec!["mp_stanjel"]);
-        assert_eq!(ids(quick), vec!["mp_carentan", "mp_stanjel"]);
-        assert!(
-            ids(iw).is_empty(),
-            "Rust remains hidden until its full gate passes"
+        // The dedicated community playlist keeps its unverified maps visible:
+        // an installed map is never silently removed from its own source pool.
+        assert_eq!(
+            ids(community),
+            vec!["mp_stanjel", "mp_unverified_community"]
         );
+        // Quick Play is the curated pool, so verification still gates it.
+        assert_eq!(ids(quick), vec!["mp_carentan", "mp_stanjel"]);
+        // IW Classics exposes the installed later-engine map while unverified.
+        assert_eq!(ids(iw), vec!["mp_rust"]);
+    }
+
+    /// An unverified map is shown with a visible marker so a player can tell
+    /// it apart from a verified one without it being hidden.
+    #[test]
+    fn an_unverified_map_carries_a_visible_alpha_marker() {
+        let r = MapRegistry::from_ids(&["mp_rust", "mp_carentan"]);
+        let rust = r.get("mp_rust").unwrap();
+        assert!(!rust.verified);
+        assert_eq!(rust.playlist_label(), "Rust [ALPHA / UNVERIFIED]");
+        let carentan = r.get("mp_carentan").unwrap();
+        assert!(carentan.verified);
+        assert_eq!(carentan.playlist_label(), "Carentan");
     }
 
     /// The vote pool respects the playlist: no cross-playlist leakage.
