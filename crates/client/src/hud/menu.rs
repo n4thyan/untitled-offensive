@@ -8,8 +8,8 @@ use vcod_common::localize::Localized;
 use vcod_common::menu::Menu;
 use vcod_common::pk3::Pk3Fs;
 
-use super::font::{self, Font};
 use super::HudQuad;
+use super::font::{self, Font};
 use crate::play::join::Join;
 
 /// One selectable row: the localized label, the response it sends, and the
@@ -87,6 +87,26 @@ impl MenuView {
             .find(|r| r.key.as_deref() == Some(key))
             .map(|r| r.response.as_str())
     }
+
+    pub fn hover(&mut self, x: f32, y: f32, screen_w: f32, screen_h: f32) -> bool {
+        let scale = screen_h / REF_H;
+        let h = panel_height(self.rows.len()) * scale;
+        let left = (screen_w - PANEL_W * scale) / 2.0;
+        let top = (screen_h - h) / 2.0;
+        if x < left || x >= left + PANEL_W * scale {
+            return false;
+        }
+        let row = ((y - top) / scale - ROWS_TOP) / ROW_GAP;
+        if row < 0.0 || row.fract() > 22.0 / ROW_GAP {
+            return false;
+        }
+        let index = row.floor() as usize;
+        if index >= self.rows.len() {
+            return false;
+        }
+        self.selected = index;
+        true
+    }
 }
 
 const SELECTED_COLOR: [f32; 4] = [1.0, 0.8, 0.2, 1.0];
@@ -102,6 +122,22 @@ const ROWS_TOP: f32 = 72.0;
 const ROW_GAP: f32 = 28.0;
 const ROW_X: f32 = 24.0;
 
+fn panel_height(rows: usize) -> f32 {
+    (ROWS_TOP + rows as f32 * ROW_GAP + 36.0).clamp(PANEL_H, REF_H - 24.0)
+}
+
+fn player_title(name: &str) -> &str {
+    if name.starts_with("team_") {
+        "CHOOSE TEAM"
+    } else if name.starts_with("weapon_") {
+        "CHOOSE WEAPON"
+    } else if name == "main" || name.starts_with("main_") {
+        "MULTIPLAYER"
+    } else {
+        "MATCH MENU"
+    }
+}
+
 /// A panel centred on the screen: the background image stretched over it
 /// when the menu has one, the title, then one text row per choice, the
 /// selected row in yellow.
@@ -115,15 +151,21 @@ pub fn build(
 ) {
     let panel_scale = screen_h / REF_H;
     let w = PANEL_W * panel_scale;
-    let h = PANEL_H * panel_scale;
+    let h = panel_height(view.rows.len()) * panel_scale;
     let x = (screen_w - w) / 2.0;
     let y = (screen_h - h) / 2.0;
 
+    out.push(HudQuad {
+        verts: [[x, y], [x + w, y], [x + w, y + h], [x, y + h]],
+        uvs: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+        rgba: [0.0, 0.0, 0.0, 0.76],
+        texture: "white".to_string(),
+    });
     if let Some(bg) = &view.background {
         out.push(HudQuad {
             verts: [[x, y], [x + w, y], [x + w, y + h], [x, y + h]],
             uvs: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
-            rgba: [1.0, 1.0, 1.0, 1.0],
+            rgba: [1.0, 1.0, 1.0, 0.32],
             texture: bg.clone(),
         });
     }
@@ -131,7 +173,7 @@ pub fn build(
     let text_scale = scale * panel_scale;
     font::layout(
         font,
-        &view.title,
+        player_title(&view.title),
         x + ROW_X * panel_scale,
         y + TITLE_Y * panel_scale,
         text_scale,
@@ -148,7 +190,11 @@ pub fn build(
         let ry = y + (ROWS_TOP + ROW_GAP * i as f32) * panel_scale;
         font::layout(
             font,
-            &row.label,
+            &format!(
+                "{}{}",
+                if i == view.selected { "> " } else { "  " },
+                row.label
+            ),
             x + ROW_X * panel_scale,
             ry,
             text_scale,
@@ -292,5 +338,22 @@ mod tests {
         assert_eq!(v.selected_response(), Some("m1garand_mp"));
         v.down();
         assert_eq!(v.selected_response(), Some("m1carbine_mp"));
+    }
+
+    #[test]
+    fn mouse_hover_selects_the_row_that_is_drawn() {
+        let mut v = view(&menu(), &Localized::default(), |_| None);
+        let scale = 720.0 / REF_H;
+        let top = (720.0 - panel_height(v.rows.len()) * scale) / 2.0;
+        let y = top + (ROWS_TOP + ROW_GAP + 10.0) * scale;
+        assert!(v.hover(640.0, y, 1280.0, 720.0));
+        assert_eq!(v.selected_response(), Some("m1garand_mp"));
+    }
+
+    #[test]
+    fn script_names_are_presented_as_player_facing_headings() {
+        assert_eq!(player_title("team_american"), "CHOOSE TEAM");
+        assert_eq!(player_title("weapon_german"), "CHOOSE WEAPON");
+        assert_eq!(player_title("main"), "MULTIPLAYER");
     }
 }

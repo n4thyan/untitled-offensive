@@ -5,8 +5,8 @@
 //! sends back an index. It is an overlay during the intermission, not a modal
 //! menu: the player keeps playing (or spectating) underneath it.
 
-use super::font::{self, Font};
 use super::HudQuad;
+use super::font::{self, Font};
 
 /// The panel's own state, rebuilt from the server's `mapvote` commands.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -127,7 +127,7 @@ pub fn build(
         verts: [[x, y], [x + w, y], [x + w, y + panel_h], [x, y + panel_h]],
         uvs: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
         rgba: [0.0, 0.0, 0.0, 0.72],
-        texture: "ui_mp/assets/white".to_string(),
+        texture: "white".to_string(),
     });
 
     let secs = panel.seconds_left(server_time_ms);
@@ -208,7 +208,11 @@ mod tests {
         assert!(p.choose(1));
         assert_eq!(p.chosen(), Some(1));
         assert!(!p.choose(9));
-        assert_eq!(p.chosen(), Some(1), "an invalid choice does not clear the vote");
+        assert_eq!(
+            p.chosen(),
+            Some(1),
+            "an invalid choice does not clear the vote"
+        );
     }
 
     #[test]

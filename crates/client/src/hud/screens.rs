@@ -23,8 +23,8 @@
 //! them.
 
 use vcod_common::classes::Profile;
-use vcod_common::maplist::{MapRegistry, PlayableMap, Playlist, MAX_BOTS, MIN_BOTS};
 use vcod_common::maplist::{GAMETYPES, PLAYLISTS};
+use vcod_common::maplist::{MAX_BOTS, MIN_BOTS, MapRegistry, PlayableMap, Playlist};
 
 use super::shell::{Menu, Outcome, Row};
 
@@ -126,6 +126,29 @@ fn gametype_id(playlist: &Playlist, index: usize) -> &'static str {
     playlist.gametypes.get(index).copied().unwrap_or("dm")
 }
 
+/// Word-wrap metadata to the shell's bounded detail column. Continuation
+/// lines keep the same indentation so they read as one secondary block.
+fn detail_rows(text: impl AsRef<str>) -> Vec<Row> {
+    const WIDTH: usize = 52;
+    let mut lines = Vec::new();
+    let mut line = String::from("  ");
+    for word in text.as_ref().split_whitespace() {
+        let extra = usize::from(line.len() > 2) + word.chars().count();
+        if line.chars().count() + extra > WIDTH && line.len() > 2 {
+            lines.push(Row::disabled("info", line));
+            line = String::from("  ");
+        }
+        if line.len() > 2 {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if line.len() > 2 {
+        lines.push(Row::disabled("info", line));
+    }
+    lines
+}
+
 impl Screens {
     /// A screens owner over a discovered map registry. The Play screen opens
     /// on the first playlist that has maps, or on the first playlist.
@@ -170,12 +193,6 @@ impl Screens {
     #[allow(dead_code)]
     pub fn current(&self) -> Option<Screen> {
         self.current
-    }
-
-    /// Whether a menu owns input right now. The caller must not build a usercmd
-    /// or act on a gameplay key while this is true.
-    pub fn captures_input(&self) -> bool {
-        self.current.is_some()
     }
 
     pub fn open(&mut self, screen: Screen) {
@@ -320,7 +337,7 @@ impl Screens {
                 ],
             ),
             Screen::ClassPicker => {
-                let mut rows = vec![Row::divider("CHOOSE CLASS")];
+                let mut rows = Vec::new();
                 if self.classes.is_empty() {
                     rows.push(Row::disabled("none", "(no classes - use Create-a-Class)"));
                 } else {
@@ -349,7 +366,7 @@ impl Screens {
         let mut rows = vec![Row::divider("MATCH SETUP")];
         rows.push(Row::selector("playlist", "Playlist", playlist_choices()));
         if !has_maps {
-            rows.push(Row::disabled("map", "Map:  (none in this playlist)"));
+            rows.push(Row::disabled("map", "No maps installed for this playlist"));
         } else {
             rows.push(Row::selector("map", "Map", maps));
         }
@@ -385,27 +402,21 @@ impl Screens {
         };
         let mut rows = vec![Row::divider(format!("MAP: {}", map.name.to_uppercase()))];
         if !map.description.is_empty() {
-            rows.push(Row::disabled("info", format!("  {}", map.description)));
+            rows.extend(detail_rows(&map.description));
         }
-        rows.push(Row::disabled(
-            "info",
-            format!("  Author:  {}", credit_line(map)),
-        ));
-        rows.push(Row::disabled(
-            "info",
-            format!("  Source:  {}", map.source_type.label()),
-        ));
+        rows.extend(detail_rows(format!("Author:  {}", credit_line(map))));
+        rows.extend(detail_rows(format!("Source:  {}", map.source_type.label())));
         if !map.supported_gametypes.is_empty() {
-            rows.push(Row::disabled(
-                "info",
-                format!("  Modes:  {}", map.supported_gametypes.join(", ")),
-            ));
+            rows.extend(detail_rows(format!(
+                "Modes:  {}",
+                map.supported_gametypes.join(", ")
+            )));
         }
         if !map.recommended_players.is_empty() {
-            rows.push(Row::disabled(
-                "info",
-                format!("  Players:  {}", map.recommended_players),
-            ));
+            rows.extend(detail_rows(format!(
+                "Players:  {}",
+                map.recommended_players
+            )));
         }
         rows
     }
@@ -419,7 +430,9 @@ impl Screens {
             .iter()
             .map(|m| m.playlist_label())
             .collect();
-        menu.set_selector("map", maps, self.map_index);
+        if !maps.is_empty() {
+            menu.set_selector("map", maps, self.map_index);
+        }
         menu.set_selector(
             "gametype",
             gametype_choices(self.selected_playlist()),
@@ -505,8 +518,9 @@ impl Screens {
             menu.selected_row().map(|r| &r.kind),
             Some(super::shell::RowKind::Selector { .. })
         ) {
-            let delta = if x < screen_w / 2.0 { -1 } else { 1 };
-            self.step_value(menu, delta);
+            if let Some(delta) = menu.selector_direction(x, screen_w, screen_h) {
+                self.step_value(menu, delta);
+            }
             None
         } else {
             self.handle_key(menu, MenuKey::Activate).1
@@ -699,7 +713,7 @@ mod tests {
     #[test]
     fn no_screen_captures_no_input() {
         let s = screens();
-        assert!(!s.captures_input());
+        assert!(s.current().is_none());
         assert!(s.menu().is_none());
     }
 
@@ -773,7 +787,7 @@ mod tests {
         ui.key(MenuKey::Right); // map -> Pavlov
         ui.select_row("bots");
         ui.key(MenuKey::Right); // bots -> 9
-                                // Leave and come back.
+        // Leave and come back.
         ui.s.close();
         ui.s.open(Screen::Play);
         ui.refresh();
@@ -910,8 +924,23 @@ mod tests {
         s.open(Screen::Play);
         s.playlist = 3; // iw_classics: Rust is unverified
         let menu = s.menu().unwrap();
-        assert!(menu.rows.iter().any(|r| r.id == "map" && r.disabled));
+        let map = menu.rows.iter().find(|r| r.id == "map").unwrap();
+        assert!(map.disabled);
+        assert_eq!(map.label, "No maps installed for this playlist");
+        assert!(
+            matches!(map.kind, super::super::shell::RowKind::Action),
+            "an empty state must not render selector arrows"
+        );
         assert_eq!(s.selected_map(), None);
+    }
+
+    #[test]
+    fn class_picker_has_one_heading_not_a_duplicate_divider() {
+        let mut s = screens();
+        s.open(Screen::ClassPicker);
+        let menu = s.menu().unwrap();
+        assert_eq!(menu.title, "CHOOSE CLASS");
+        assert!(!menu.rows.iter().any(|r| r.label == "CHOOSE CLASS"));
     }
 
     /// The map info panel names the community author, so credit is visible in
@@ -929,6 +958,10 @@ mod tests {
         );
         assert!(text.iter().any(|l| l.contains("CoD1 Community")));
         assert!(text.iter().any(|l| l.contains("MAP: STANJEL")));
+        assert!(
+            text.iter().all(|line| line.chars().count() <= 54),
+            "metadata must fit the bounded detail area: {text:?}"
+        );
     }
 
     /// Esc from a sub-screen goes back to the main menu, not straight out.
@@ -1053,10 +1086,11 @@ mod tests {
         s.open(Screen::Main);
         let menu = s.menu().unwrap();
         assert!(menu.rows.iter().any(|r| r.id == "play" && !r.disabled));
-        assert!(menu
-            .rows
-            .iter()
-            .any(|r| r.id == "createaclass" && r.disabled));
+        assert!(
+            menu.rows
+                .iter()
+                .any(|r| r.id == "createaclass" && r.disabled)
+        );
         assert!(menu.rows.iter().any(|r| r.id == "options" && r.disabled));
         assert!(menu.rows.iter().any(|r| r.id == "quit" && !r.disabled));
         assert!(!menu.rows.iter().any(|r| r.id == "stats"));
@@ -1076,15 +1110,20 @@ mod tests {
     }
 
     #[test]
-    fn clicking_a_selector_half_steps_its_value() {
+    fn selector_clicks_use_visible_arrow_zones() {
         let mut ui = Ui::new(Screen::Play);
         let map = ui.menu.rows.iter().position(|r| r.id == "map").unwrap();
         let (x, y) = ui.menu.row_center(map, 1600.0, 900.0).unwrap();
         assert_eq!(ui.menu.value_of("map"), Some("Carentan"));
+
+        ui.s.handle_click(&mut ui.menu, x, y, 1600.0, 900.0);
         assert_eq!(
-            ui.s.handle_click(&mut ui.menu, x + 100.0, y, 1600.0, 900.0),
-            None
+            ui.menu.value_of("map"),
+            Some("Carentan"),
+            "clicking the label/value must not silently step"
         );
+
+        ui.s.handle_click(&mut ui.menu, x + 350.0, y, 1600.0, 900.0);
         assert_eq!(ui.menu.value_of("map"), Some("Harbor"));
         assert_eq!(ui.s.selected_map(), Some("mp_harbor"));
     }

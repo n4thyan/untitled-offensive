@@ -1789,7 +1789,7 @@ impl Server {
             // retail edited classes in a client-side config the server never
             // saw, which cannot work when the server owns the loadout.
             //
-            //   class <slot> <value>
+            //   class <class_index> <slot> <value>
             //
             // The profile is keyed by the *server's* name for this client, so
             // a client cannot edit anyone else's class by claiming a name.
@@ -1798,14 +1798,20 @@ impl Server {
             // than being stored as a playable loadout.
             "class" => {
                 let mut it = args.split_whitespace();
-                let (Some(slot_name), Some(value)) = (it.next(), it.next()) else {
-                    log::debug!("client {slot}: class needs a slot and a value");
+                let (Some(index), Some(slot_name), Some(value)) =
+                    (it.next(), it.next(), it.next())
+                else {
+                    log::debug!("client {slot}: class needs an index, slot and value");
                     return true;
                 };
                 if it.next().is_some() {
-                    log::debug!("client {slot}: class takes exactly two arguments");
+                    log::debug!("client {slot}: class takes exactly three arguments");
                     return true;
                 }
+                let Some(index) = index.parse::<usize>().ok() else {
+                    log::debug!("client {slot}: class index is not a number");
+                    return true;
+                };
                 let Some(class_slot) = ClassSlot::from_key(slot_name) else {
                     log::debug!("client {slot}: unknown class slot {slot_name:?}");
                     return true;
@@ -1813,24 +1819,26 @@ impl Server {
                 let Some(name) = self.clients[slot].as_ref().map(|c| c.name.clone()) else {
                     return true;
                 };
-                if value.is_empty() || value == "-" {
-                    // "-" clears the slot, so a value is never a bare dash
-                    // trying to be both.
-                    self.classes.set_slot(&name, class_slot, "");
-                } else if matches!(
+                let value = if value == "-" { "" } else { value };
+                if !value.is_empty()
+                    && matches!(
                     class_slot,
                     ClassSlot::Primary | ClassSlot::Secondary | ClassSlot::Equipment
-                ) && !crate::configstrings::weapon_index(value)
-                    .is_some_and(|i| self.weapon_table.get(i).is_some())
+                )
+                    && !crate::configstrings::weapon_index(value)
+                        .is_some_and(|i| self.weapon_table.get(i).is_some())
                 {
                     log::warn!("classes: {name:?} rejected unknown weapon {value:?}");
                     if let Some(c) = self.clients[slot].as_mut() {
                         strike_client(c, slot, crate::validation::Reason::InvalidLoadout);
                     }
-                } else if self.classes.set_slot(&name, class_slot, value) {
-                    log::info!("classes: {name:?} {slot_name} = {value}");
+                } else if self.classes.set_slot_at(&name, index, class_slot, value) {
+                    log::info!("classes: {name:?} class {index} {slot_name} = {value}");
+                    self.send_profile(slot);
                 } else {
-                    log::warn!("classes: {name:?} rejected {slot_name} = {value:?}");
+                    log::warn!(
+                        "classes: {name:?} rejected class {index} {slot_name} = {value:?}"
+                    );
                     if let Some(c) = self.clients[slot].as_mut() {
                         strike_client(c, slot, crate::validation::Reason::InvalidLoadout);
                     }

@@ -14,8 +14,8 @@
 //! visibly dim and cannot be activated - a menu item that does nothing must
 //! look like it does nothing rather than silently swallow the key.
 
-use super::font::{self, Font};
 use super::HudQuad;
+use super::font::{self, Font};
 
 /// What a row does when Enter is pressed, or what left/right changes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -223,6 +223,22 @@ impl Menu {
         })
     }
 
+    /// A selector click changes value only on its visible left/right control
+    /// zones. Clicking the label or value merely selects the row.
+    pub fn selector_direction(&self, x: f32, screen_w: f32, screen_h: f32) -> Option<isize> {
+        let g = geometry(self.rows.len(), screen_w, screen_h);
+        let right = g.x + g.w - 20.0 * g.ps;
+        let left = right - 176.0 * g.ps;
+        let arrow = 34.0 * g.ps;
+        if x >= left && x < left + arrow {
+            Some(-1)
+        } else if x >= right - arrow && x < right {
+            Some(1)
+        } else {
+            None
+        }
+    }
+
     /// Move selection to the selectable row under the pointer.
     pub fn hover(&mut self, x: f32, y: f32, screen_w: f32, screen_h: f32) -> bool {
         let Some(index) = self.hit_test(x, y, screen_w, screen_h) else {
@@ -308,7 +324,7 @@ pub fn build(
         verts: [[x, y], [x + w, y], [x + w, y + h], [x, y + h]],
         uvs: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
         rgba: [0.0, 0.0, 0.0, 0.72],
-        texture: "ui_mp/assets/white".to_string(),
+        texture: "white".to_string(),
     });
 
     font::layout(
@@ -330,24 +346,41 @@ pub fn build(
             (true, false) => DIM,
             (false, false) => NORMAL,
         };
-        let text = match &row.kind {
-            RowKind::Selector { .. } => match row.selected_choice() {
-                Some(v) => format!("{}:  < {v} >", row.label),
-                None => format!("{}:  < >", row.label),
-            },
-            _ => row.label.clone(),
-        };
+        if selected {
+            let left = x + 14.0 * ps;
+            let right = x + w - 14.0 * ps;
+            let top = ry - 2.0 * ps;
+            let bottom = top + g.row_h * ps;
+            out.push(HudQuad {
+                verts: [[left, top], [right, top], [right, bottom], [left, bottom]],
+                uvs: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                rgba: [0.32, 0.23, 0.06, 0.72],
+                texture: "white".to_string(),
+            });
+        }
         // The caret marks the selection without relying on colour alone.
         let caret = if selected { "> " } else { "  " };
         font::layout(
             font,
-            &format!("{caret}{text}"),
+            &format!("{caret}{}", row.label),
             x + ROW_X * ps,
             ry,
             ts,
             color,
             out,
         );
+        if let RowKind::Selector { .. } = &row.kind {
+            let value = row.selected_choice().unwrap_or("");
+            font::layout(
+                font,
+                &format!("<  {value}  >"),
+                x + (PANEL_W - 196.0) * ps,
+                ry,
+                ts,
+                color,
+                out,
+            );
+        }
     }
 
     font::layout(
