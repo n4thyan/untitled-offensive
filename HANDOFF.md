@@ -1,6 +1,69 @@
 # UNTITLED — Session Handoff
 
-## AUTHORITATIVE PARKED CHECKPOINT — 2026-10-09
+## AUTHORITATIVE SESSION CHECKPOINT — 2026-10-13, 21:00 BST
+
+This section supersedes every older status and priority section below. Continue
+from branch `fix/playable-alpha-lifecycle`; do not restart or reimplement the
+single-modal or indexed Create-a-Class work.
+
+### Preserved work
+
+- Commit `040efd6` (`[verified] refactor: unify client modal navigation and class editing`)
+  is pushed to draft PR #1 at `n4thyan/untitled-offensive` and was not merged.
+- The client now has one modal owner across shell, script menu, vote and
+  Create-a-Class flows. Indexed editing covers all 10 class positions and six
+  distinct slots (Primary, Secondary, Equipment and Perk 1/2/3).
+- A pre-spawn deadlock was fixed: pressing M over the stock script weapon menu
+  can open Pause/Change Class while preserving the pending Join request, allowing
+  class selection to emit both `selectclass <index>` and the required `mr ...`.
+- Class changes remain server-authoritative and pending until a legitimate spawn;
+  they are not applied to an already-live player.
+
+### Verification evidence
+
+- `cargo test --release -p vcod --bins`: passed (473 tests in the recorded full run).
+- Focused client ten-class, Create-a-Class, screen, script-menu and shortcut tests: passed.
+- Focused server indexed class and integration tests: passed.
+- `cargo build --release -p vcod -p vcod-server`: passed.
+- `git diff --check`: passed before commit; pushed SHA matched local
+  `040efd60b86ae97b71a9ddbf96218fe7a21be6b9`.
+- The broad workspace run still exits 101 on existing retail-dependent common and
+  server fixtures. Representative failures reproduced at clean HEAD, so they are
+  baseline/environment failures rather than regressions from this branch. Full
+  output is preserved in `dev-logs/playable-alpha-workspace-test.log`.
+- The worldless client launched successfully and rendered the updated main menu.
+  A complete two-resolution lifecycle matrix was not finished before parking.
+
+### Human runtime feedback from the final playtest
+
+Nathan reported that menus are still somewhat buggy and the game felt laggier
+than usual. Treat both as untriaged observations, not fixed or quantified issues.
+Do not guess at a cause: reproduce each with a tight runtime probe and capture
+frametime/input evidence before changing code.
+
+### First tasks next session
+
+1. Build a proper Settings menu (explicit request), including resolution/window
+   controls and persistent values; validate at 1280×720 and 1920×1080.
+2. Reproduce the remaining menu bugs through the full sequence: Main Menu → Play
+   → Match Setup → Start → connect/load/spawn → Pause → Change Class → Resume →
+   Leave → start a second match. Exercise mouse, keyboard, wheel, Escape, Enter,
+   cursor release and reacquisition; record each concrete defect before fixing it.
+3. Measure the reported slowdown against `702f89d` and `040efd6` with the same map,
+   bot count and resolution. Capture frame-time/runtime logs and isolate whether
+   the regression is menu rendering, an owned server/process leak, or gameplay.
+4. Reproduce and fix invisible remote player/bot models on Rust without touching
+   the verified IW4 world geometry/material/collision pipeline.
+5. After stabilization only, read-only probe `mp_highrise`, `mp_boneyard` and
+   `mp_terminal`; select a low-risk future vertical slice. Do not expose any map,
+   start a port, or redistribute retail assets.
+
+Do not promote `mp_rust` (`verified: false`) or merge PR #1 until the visual,
+lifecycle, repeated-match and resolution gates pass.
+
+---
+
+## SUPERSEDED PARKED CHECKPOINT — 2026-10-09
 
 This section supersedes older status/next-task sections below. The older notes
 remain as development history; do not use them to decide current priorities.
